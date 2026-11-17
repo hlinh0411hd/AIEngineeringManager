@@ -57,6 +57,20 @@ The manager can inspect and route work to configured local AI providers and comm
 
 Provider availability is detected from the installed executable and its capabilities. The application does not assume that an installed executable means that the user is authenticated, has quota, or can use every model. Provider, model, access, priority, and write permissions are configured explicitly in **Settings > AI & Models**.
 
+#### How a model is chosen
+
+Routing is deterministic C# policy. It makes no AI call and every decision records its reason in the task history.
+
+- **Work type and difficulty.** Each step is classified (code, debugging, UI/UX, architecture, graphics/math, testing, review, research, writing, translation, image work, and more) and given a 0–100 difficulty. Easy work needs a lower quality bar than hard work.
+- **Model order per work type.** Every work type has an ordered list of models. The router takes the first usable model that meets the step's bar, so cheap models take easy work and stronger models take hard work. Models that are not installed, blocked, out of usage, or already sent back on the step are skipped and the next one is used. Some entries carry a difficulty cap, for example Sonnet for architecture only up to difficulty 69, then Opus.
+- **Claude and Codex first.** By default Claude Code and Codex are the primary providers. The other CLIs (Qoder, Antigravity, Copilot, OpenCode, Gemini) only run a step when neither primary provider can. Qualified local Ollama models stay eligible for classification and extraction.
+- **Reviews by a different AI.** A review step is given to a different provider than the one that wrote the work it reviews, when one is usable, so a model does not grade its own output.
+- **Ratings that keep up.** Built-in quality ratings and relative usage costs come from public benchmarks and pricing. Update them without rebuilding: edit `model-ratings.json` in the data folder, or point **Settings > AI & Models > Model ratings** at a JSON URL that is refreshed daily. The same file can change the model order.
+- **Learning from your decisions.** Approvals and send-backs adjust a model's score for that work type by at most 12 points, fading over about 30 days. A verdict on a whole task is divided between its steps, so one weak step does not mark every model that worked on it. **Reset learning** discards the history of judgments.
+- **No switch limit.** If a provider is out of usage or unavailable, the step continues on the next usable one and keeps a checkpoint.
+
+Manual mode only runs the model you pick, SemiAutomatic proposes a route for approval, and Automatic chooses and falls back by itself. See [AI routing](docs/ROUTING.md) for the exact rules.
+
 ### Safe coding handoff
 
 For providers that return proposed edits, the manager can:
@@ -112,6 +126,10 @@ Project access, provider write access, tool permissions, and publishing approval
 ### Reviewable execution
 
 Plans, provider choices, tool inputs, decisions, proposed edits, artifacts, test results, and handoffs are persisted instead of disappearing into a chat transcript.
+
+### Cost-aware model routing
+
+The router matches each step to a model by work type and difficulty instead of sending everything to one expensive model. It is tuned to use Claude and Codex first, keeps other AIs as fallback, has a different AI review the work, and learns from your approvals. The quality ratings and model order can be updated from a file or URL.
 
 ### Deterministic policy around AI
 
@@ -220,6 +238,7 @@ AIEmployeeManager/
 ## Documentation guide
 
 - [Architecture](docs/ARCHITECTURE.md) — application layers, state, process control, storage, and safety boundaries.
+- [AI routing](docs/ROUTING.md) — how models are chosen, the model order per work type, ratings files, learning, and fallback.
 - [Tool and API integrations](docs/INTEGRATIONS.md) — provider and connector inventory, configuration, and known limitations.
 - [V2 task execution](docs/V2.md) — planning, budgets, approvals, queue behavior, and execution limits.
 - [V3–V4 setup and behavior](docs/V3-V4.md) — dashboard, connectors, local updates, and implementation boundaries.
@@ -268,8 +287,6 @@ Before opening a pull request:
 3. Update the relevant documentation when behavior, permissions, provider support, or connector contracts change.
 4. Run `Build.bat`, or at minimum restore, build, and run the focused checks relevant to your change.
 5. Describe any provider, backend, or runtime behavior that could not be verified locally.
-
-## License
 
 ## License
 
