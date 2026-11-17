@@ -8,3 +8,7 @@ artifacts/
 Data/
 data-location.json
 data-location.json.*.tmp
+
+# Build output and local tool settings
+Release/
+.qoder/
