@@ -1,7 +1,15 @@
 namespace Employee.Core;
-public sealed class ModelRouter(IReadOnlyList<ModelReliability>? reliability = null, IReadOnlyList<ModelOutcome>? outcomes = null, DateTimeOffset? learningSince = null)
+public sealed class ModelRouter(IReadOnlyList<ModelReliability>? reliability = null, IReadOnlyList<ModelOutcome>? outcomes = null, DateTimeOffset? learningSince = null, Func<string, WorkItem?>? workLookup = null)
 {
-    public static ModelRouter For(IEmployeeStore store) => new(store.Reliability(), store.ModelOutcomes(), store.LoadSettings().LearningResetAt);
+    public static ModelRouter For(IEmployeeStore store)
+    {
+        // Loaded only when a review needs to know who wrote the work it reviews.
+        var works = new Lazy<Dictionary<string, WorkItem>>(() => store.WorkItems().GroupBy(w => w.Id).ToDictionary(g => g.Key, g => g.First()));
+        return new(store.Reliability(), store.ModelOutcomes(), store.LoadSettings().LearningResetAt, id => works.Value.GetValueOrDefault(id));
+    }
+
+    // Who produced the results a step depends on (provider and model), so a review can use another one.
+    private IReadOnlyList<(string ProviderId, string ModelId)> Authors(WorkItem work) => workLookup == null ? [] : [..work.DependsOn.Select(id => workLookup(id)).Where(w => w is { ProviderId: not null, Tool: null, State: WorkState.Completed or WorkState.NeedsReview }).Select(w => (w!.ProviderId!, w.ModelId ?? "")).Distinct()];
     private bool TemporarilyUnreliable(string model, WorkKind kind, IReadOnlyList<Evaluation> evaluations)
     {
         var sample = reliability?.FirstOrDefault(r => r.ModelId == model && r.Kind == kind);
@@ -129,6 +137,40 @@ public sealed class ModelRouter(IReadOnlyList<ModelReliability>? reliability = n
         else if (capability == WorkCapability.ImageGeneration && !candidates.Any(c => c.Quality > 0))
             return null;
 
+        // Claude and Codex first: the other AIs only run a step when neither can (out of usage, not
+        // signed in, disabled, no permission). Qualified local AI (Ollama) stays eligible.
+        var primary = settings.PrimaryProviders ?? [];
+        var tierNote = "";
+        if (explicitChoice == null && primary.Count > 0 && candidates.Any(c => primary.Contains(c.p.Id)))
+            candidates = candidates.Where(c => c.p.Id == "ollama" || primary.Contains(c.p.Id)).ToArray();
+        else if (explicitChoice == null && primary.Count > 0 && candidates.Length > 0)
+            tierNote = $"fallback AI: {string.Join(" and ", primary)} cannot run this step now; ";
+        // A review is done by another provider than the one that wrote the work (else another model).
+        var authors = settings.ReviewByOtherModel && explicitChoice == null && work.Kind == WorkKind.Review ? Authors(work) : [];
+        var reviewNote = "";
+        if (authors.Count > 0 && candidates.Length > 0)
+        {
+            var authorProviders = authors.Select(a => a.ProviderId).ToHashSet();
+            var otherProvider = candidates.Where(c => !authorProviders.Contains(c.p.Id)).ToArray();
+            if (otherProvider.Length > 0)
+            {
+                candidates = otherProvider;
+                reviewNote = $"reviewer from a different provider than the author ({string.Join(", ", authorProviders)}); ";
+            }
+            else
+            {
+                var authorModels = authors.Select(a => a.ProviderId + "|" + a.ModelId).ToHashSet();
+                var otherModel = candidates.Where(c => !authorModels.Contains(c.p.Id + "|" + c.m.Id)).ToArray();
+                if (otherModel.Length > 0)
+                {
+                    candidates = otherModel;
+                    reviewNote = "reviewer is a different model than the author (no other provider usable); ";
+                }
+                else
+                    reviewNote = "no other reviewer usable: the author's own model reviews; ";
+            }
+        }
+
         // A worker able to do the capability at all (e.g. has an image tool) comes first. Then
         // explicit user choices: a manual primary role, then provider priority (all equal by
         // default). Otherwise the lowest expected usage to an accepted result wins. An empty model
@@ -167,7 +209,28 @@ public sealed class ModelRouter(IReadOnlyList<ModelReliability>? reliability = n
             }
         }
 
-        var reason = compatible ? $"Compatible role: permitted Coding model handles {work.Kind} with already approved {work.Access}; no project access or model catalog changed. " : "";
+        // The user's model order for this work type: the first usable model that meets the step's bar,
+        // else the strongest usable one in the list. Not used with a usage level, a manual primary
+        // role or qualified local AI, which have their own rules.
+        if (level == UsageLevel.Auto && settings.UsePriorityLists && candidates.Length > 0 && !candidates.Any(c => c.p.Id == "ollama" || c.m.RoleRank(work.Kind) == 2))
+        {
+            var orderType = work.Kind == WorkKind.Review && capability != WorkCapability.ImageUnderstanding ? WorkCapability.Review : capability;
+            var listed = ModelRatings.PriorityFor(orderType).Where(r => r.MaxDifficulty >= difficulty)
+                .Select(r => candidates.FirstOrDefault(c => c.p.Id == r.ProviderId && string.Equals(c.m.Id, r.ModelId, StringComparison.OrdinalIgnoreCase) && c.Quality > 0))
+                .Where(c => c != null).Select(c => c!).Distinct().ToArray();
+            if (listed.Length > 0)
+            {
+                var fresh = listed.Where(c => !work.RejectedRoutes.Contains(c.p.Id + "|" + c.m.Id)).ToArray();
+                var pool = fresh.Length > 0 ? fresh : listed;
+                var meeting = pool.FirstOrDefault(c => c.Meets);
+                best = meeting ?? pool.OrderByDescending(c => c.Quality).ThenBy(c => c.Cost).First();
+                how = meeting != null
+                    ? $"priority order for {orderType}: first usable model meeting quality {required} (#{Array.IndexOf(listed, meeting) + 1} of {listed.Length} usable)"
+                    : $"priority order for {orderType}: no listed model meets quality {required}, strongest listed one";
+            }
+        }
+
+        var reason = tierNote + reviewNote + (compatible ? $"Compatible role: permitted Coding model handles {work.Kind} with already approved {work.Access}; no project access or model catalog changed. " : "");
         return best is null ? null : new(best.p.Id, best.m.Id, reason + $"Rule-based: kind={work.Kind}; capability={capability}; difficulty={difficulty}/100 ({effort}); usage level={level}; required {capability} quality={required}{(work.Reworks + work.Escalations > 0 ? $" (raised after {work.Reworks} send-back(s) and {work.Escalations} escalation(s))" : "")}; " + (best.m.RoleRank(work.Kind) == 2 ? "manual primary role; " : best.Quality == 0 ? "no permitted worker can do " + capability + "; " : how + "; ") + $"quality={best.Quality}; usage rank={best.Cost}; first-try acceptance≈{best.Chance:P0}; expected usage={best.Expected:F0}; priority={best.p.Priority}; rating={best.m.RatingSource}. Approvals and send-backs for this model and work type refine the estimate. No AI call.");
     }
 

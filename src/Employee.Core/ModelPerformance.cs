@@ -50,7 +50,9 @@ public enum OutcomeSource
     Failure
 }
 
-public sealed record ModelOutcome(string ProviderId, string ModelId, WorkCapability Capability, int Difficulty, bool Accepted, OutcomeSource Source, DateTimeOffset At);
+// Share: how much of one verdict this result carries. A verdict on a whole task (approved, sent back)
+// is divided between the steps that produced it, so one weak step does not mark every model of the task.
+public sealed record ModelOutcome(string ProviderId, string ModelId, WorkCapability Capability, int Difficulty, bool Accepted, OutcomeSource Source, DateTimeOffset At, double Share = 1);
 // Learns how far a model's real results sit above or below its rating, per work type. Each result
 // is compared with what the rating predicted at that result's own difficulty, so easy wins add
 // almost nothing and hard wins add a lot; misses on easy work cost a lot, misses on hard work little.
@@ -72,7 +74,7 @@ public static class ModelLearning
             if (since is { } start && outcome.At < start)
                 continue;
             var age = Math.Max(0, (now - outcome.At).TotalDays);
-            var weight = Weight(outcome.Source) * Math.Pow(0.5, age / HalfLifeDays);
+            var weight = Weight(outcome.Source) * Math.Clamp(outcome.Share, 0.05, 1) * Math.Pow(0.5, age / HalfLifeDays);
             var expected = Acceptance(rated, ModelRatings.RequiredQuality(outcome.Difficulty, RoutingPreference.Balanced));
             residual += weight * ((outcome.Accepted ? 1 : 0) - expected);
             total += weight;

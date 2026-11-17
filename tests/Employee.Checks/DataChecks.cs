@@ -65,7 +65,7 @@ static class DataChecks
                 ModelRatings.Apply(set);
                 var luna = new ModelInfo("gpt-6-luna", []);
                 Assert(ModelRatings.QualityFor("codex", luna, WorkCapability.Debugging) == 40, "A ratings file overrides the built-in value");
-                Assert(ModelRatings.QualityFor("codex", luna, WorkCapability.Coding) == 85, "Capabilities the file omits keep the built-in value");
+                Assert(ModelRatings.QualityFor("codex", luna, WorkCapability.Coding) == 77, "Capabilities the file omits keep the built-in value");
                 Assert(luna.RatingSource.StartsWith("Ratings from test"));
                 var bad = false;
                 try

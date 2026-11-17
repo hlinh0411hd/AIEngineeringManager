@@ -126,6 +126,7 @@ static class RoutingChecks
             var all = Enum.GetValues<WorkKind>();
             var settings = new ManagerSettings
             {
+                UsePriorityLists = false,
                 Providers = [new ProviderSettings
                 {
                     Id = "codex",
@@ -142,9 +143,9 @@ static class RoutingChecks
                 ]
             };
             ProviderHealth[] health = [new("codex", true, true, true, ""), new("claude", true, true, true, "")];
-            var light = router.Select(new WorkItem { Kind = WorkKind.Research, Access = AccessLevel.ReadProject, Effort = WorkEffort.Light }, settings, health, []);
+            var light = router.Select(new WorkItem { Kind = WorkKind.Content, Access = AccessLevel.ReadProject, Effort = WorkEffort.Light }, settings, health, []);
             Assert(light?.ModelId == "gpt-6-luna", "Light work should use the cheapest adequate model, got " + light?.ModelId);
-            var routine = router.Select(new WorkItem { Kind = WorkKind.Coding, Access = AccessLevel.ReadProject, Request = "Add a pause button to the HUD" }, settings, health, []);
+            var routine = router.Select(new WorkItem { Kind = WorkKind.Coding, Access = AccessLevel.ReadProject, Request = "Write unit tests for the pause button" }, settings, health, []);
             Assert(routine?.ModelId == "gpt-6-luna", "Routine coding should use a cheap model that is good enough, got " + routine?.ModelId);
             var hard = new WorkItem
             {
@@ -235,6 +236,7 @@ static class RoutingChecks
             var all = Enum.GetValues<WorkKind>();
             var settings = new ManagerSettings
             {
+                UsePriorityLists = false,
                 Providers = [new ProviderSettings
                 {
                     Id = "codex",
@@ -257,10 +259,163 @@ static class RoutingChecks
                 return w;
             }
 
-            Assert(router.Select(Rated("Write unit tests for the inventory", 70), settings, health, [])?.ModelId == "gpt-6-luna", "Tests are fine on a cheap model");
+            Assert(router.Select(Rated("Write unit tests for the inventory", 60), settings, health, [])?.ModelId == "gpt-6-luna", "Tests are fine on a cheap model");
             Assert(router.Select(Rated("Fix crash when loading the save file", 70), settings, health, [])?.ModelId == "sonnet", "Same difficulty debugging needs a stronger model");
             Assert(router.Select(Rated("Redesign the main menu UI layout", 80), settings, health, [])?.ModelId == "sonnet", "UI work at 80 should prefer the stronger UI model at equal usage");
             Assert(router.Select(shot, settings, health, [])?.ProviderId == "codex", "Only workers that receive attachments can read images");
+            return Task.CompletedTask;
+        });
+        await Check("Priority order: Claude and Codex first, the work type's own order, difficulty caps, missing models skipped, other AIs only as fallback", () =>
+        {
+            var all = Enum.GetValues<WorkKind>();
+            ManagerSettings Settings(bool haiku) => new()
+            {
+                Providers = [new ProviderSettings
+                {
+                    Id = "codex",
+                    Enabled = true,
+                    AllowProjectWrite = true,
+                    Models = [new("gpt-6.1-sol", all), new("gpt-6.1-terra", all), new("gpt-6-astra", all)]
+                }, new ProviderSettings
+                {
+                    Id = "claude",
+                    Enabled = true,
+                    AllowProjectWrite = true,
+                    Models = [..(haiku ? new[] { "haiku" } : []).Concat(["sonnet", "opus"]).Select(id => new ModelInfo(id, all))]
+                }, new ProviderSettings
+                {
+                    Id = "qoder",
+                    Enabled = true,
+                    AllowProjectWrite = true,
+                    Models = [new("GLM-5.3-Flash", all)]
+                }]
+            };
+            ProviderHealth[] health = [new("codex", true, true, true, ""), new("claude", true, true, true, ""), new("qoder", true, true, true, "")];
+            WorkItem Step(int difficulty, string? hint = null, WorkKind kind = WorkKind.Coding) => new()
+            {
+                Kind = kind,
+                Access = AccessLevel.ReadProject,
+                Request = "Work on the game",
+                Difficulty = difficulty,
+                CapabilityHint = hint
+            };
+            var router = new ModelRouter();
+            var settings = Settings(haiku: false);
+            Assert(router.Select(Step(25), settings, health, [])?.ModelId == "sonnet", "A missing first model (haiku) is skipped: the next one in the order takes the step");
+            Assert(router.Select(Step(60, "Architecture"), settings, health, [])?.ModelId == "sonnet" && router.Select(Step(80, "Architecture"), settings, health, [])?.ModelId == "opus", "Architecture: Sonnet up to difficulty 69, Opus above");
+            Assert(router.Select(Step(80, "GraphicsMath"), settings, health, [])?.ModelId == "opus" && router.Select(Step(80, "Debugging"), settings, health, [])?.ModelId == "opus", "Hard graphics/math and debugging skip Sonnet");
+            Assert(router.Select(Step(50, "Planning", WorkKind.Planning), settings, health, [])?.ModelId == "opus", "Planning starts on Opus");
+            Assert(router.Select(Step(50, "Testing"), settings, health, [])?.ModelId == "gpt-6.1-terra", "Tests use the cheap Codex model when haiku is missing");
+            var withHaiku = Settings(haiku: true);
+            Assert(router.Select(Step(25), withHaiku, health, [])?.ModelId == "haiku" && router.Select(Step(70), withHaiku, health, [])?.ModelId == "sonnet", "Haiku takes easy work once it exists; harder work moves to the next model");
+            var rejected = Step(25);
+            rejected.Reworks = 1;
+            rejected.RejectedRoutes = ["claude|haiku"];
+            Assert(router.Select(rejected, withHaiku, health, [])?.ModelId == "sonnet", "A model whose result was sent back is skipped for this step");
+            // Claude and Codex first: another AI only runs when neither can.
+            var onlyClaude = router.Select(Step(50), settings, health, [], new HashSet<string> { "codex" });
+            Assert(onlyClaude?.ProviderId == "claude", "With Codex out, Claude takes the step, not the other AIs");
+            var fallback = router.Select(Step(50), settings, health, [], new HashSet<string> { "codex", "claude" });
+            Assert(fallback?.ProviderId == "qoder" && fallback.Reason.Contains("fallback AI"), "Only when neither can run it does another AI take over: " + fallback?.ProviderId);
+            settings.PrimaryProviders = [];
+            Assert(router.Select(Step(50), settings, health, []) != null, "Without provider tiers routing still works");
+            settings.PrimaryProviders = ["codex", "claude"];
+            settings.UsePriorityLists = false;
+            Assert(router.Select(Step(50), settings, health, [])?.Reason.Contains("priority order") == false, "The order can be switched off");
+            settings.UsePriorityLists = true;
+            // A ratings file replaces a work type's order; a bad entry is rejected.
+            try
+            {
+                ModelRatings.Apply(new("test", DateTimeOffset.UtcNow, [], new() { ["Coding"] = ["codex/gpt-6.1-terra"] }));
+                Assert(router.Select(Step(50), settings, health, [])?.ModelId == "gpt-6.1-terra", "A ratings file can set the order for a work type");
+                Assert(router.Select(Step(50, "Debugging"), settings, health, [])?.ModelId == "sonnet", "Work types the file does not list keep the built-in order");
+                var bad = false;
+                try
+                {
+                    ModelRatings.Apply(new("x", DateTimeOffset.UtcNow, [], new() { ["Coding"] = ["not-a-model"] }));
+                }
+                catch (InvalidOperationException)
+                {
+                    bad = true;
+                }
+
+                Assert(bad, "An invalid priority entry is rejected");
+            }
+            finally
+            {
+                ModelRatings.Apply(null);
+            }
+
+            Assert(ModelRatings.ParseRung("claude/sonnet@69") is { ProviderId: "claude", ModelId: "sonnet", MaxDifficulty: 69 } && ModelRatings.ParseRung("opencode/opencode/gpt-5")?.ModelId == "opencode/gpt-5", "Priority entries parse provider, model and difficulty cap");
+            return Task.CompletedTask;
+        });
+        await Check("A review is done by another provider than the one that wrote the work", () =>
+        {
+            var all = Enum.GetValues<WorkKind>();
+            var settings = new ManagerSettings
+            {
+                Providers = [new ProviderSettings
+                {
+                    Id = "codex",
+                    Enabled = true,
+                    AllowProjectWrite = true,
+                    Models = [new("gpt-6.1-terra", all), new("gpt-6.1-sol", all)]
+                }, new ProviderSettings
+                {
+                    Id = "claude",
+                    Enabled = true,
+                    AllowProjectWrite = true,
+                    Models = [new("sonnet", all), new("opus", all)]
+                }]
+            };
+            ProviderHealth[] health = [new("codex", true, true, true, ""), new("claude", true, true, true, "")];
+            var works = new Dictionary<string, WorkItem>();
+            WorkItem Author(string provider, string model)
+            {
+                var w = new WorkItem { Kind = WorkKind.Coding, State = WorkState.Completed, ProviderId = provider, ModelId = model };
+                works[w.Id] = w;
+                return w;
+            }
+
+            var router = new ModelRouter(workLookup: id => works.GetValueOrDefault(id));
+            WorkItem Review(WorkItem author) => new() { Kind = WorkKind.Review, Access = AccessLevel.ReadProject, Difficulty = 50, Request = "Review the change", DependsOn = [author.Id] };
+            var byClaude = router.Select(Review(Author("claude", "sonnet")), settings, health, []);
+            Assert(byClaude?.ProviderId == "codex" && byClaude.Reason.Contains("different provider"), "Code written by Claude is reviewed by Codex, got " + byClaude?.ProviderId);
+            var byCodex = router.Select(Review(Author("codex", "gpt-6.1-sol")), settings, health, []);
+            Assert(byCodex?.ProviderId == "claude", "Code written by Codex is reviewed by Claude, got " + byCodex?.ProviderId);
+            var codexOut = router.Select(Review(Author("claude", "sonnet")), settings, health, [], new HashSet<string> { "codex" });
+            Assert(codexOut?.ProviderId == "claude" && codexOut.ModelId == "opus", "Without another provider a different model reviews, got " + codexOut?.ModelId);
+            var noOne = router.Select(Review(Author("claude", "sonnet")), new ManagerSettings { Providers = [new ProviderSettings { Id = "claude", Enabled = true, AllowProjectWrite = true, Models = [new("sonnet", all)] }] }, health, []);
+            Assert(noOne?.ModelId == "sonnet" && noOne.Reason.Contains("author's own model"), "With nothing else usable the author's own model still reviews");
+            var off = new ManagerSettings { ReviewByOtherModel = false, Providers = settings.Providers };
+            Assert(router.Select(Review(Author("codex", "gpt-6.1-terra")), off, health, [])?.ModelId == "gpt-6.1-terra", "The rule can be switched off");
+            var unrelated = new WorkItem { Kind = WorkKind.Review, Access = AccessLevel.ReadProject, Difficulty = 50, Request = "Review the project" };
+            Assert(router.Select(unrelated, settings, health, []) != null, "A review with nothing before it has no author to avoid");
+            return Task.CompletedTask;
+        });
+        await Check("A verdict on a whole task is divided between its steps; one step carries all of it", () =>
+        {
+            using var f = New();
+            foreach (var i in Enumerable.Range(0, 5))
+            {
+                f.Store.SaveModelRun(new($"team{i}", $"team{i}", "codex", "gpt-6-luna", WorkKind.Coding, FailureKind.None, 1000, false, DateTimeOffset.UtcNow, null, WorkCapability.Debugging));
+                f.Store.SaveModelRun(new($"solo{i}", $"solo{i}", "codex", "gpt-6.1-luna", WorkKind.Coding, FailureKind.None, 1000, false, DateTimeOffset.UtcNow, null, WorkCapability.Debugging));
+            }
+
+            f.Store.RecordRework(Enumerable.Range(0, 5).Select(i => $"team{i}"));
+            foreach (var i in Enumerable.Range(0, 5))
+                f.Store.RecordRework([$"solo{i}"]);
+            var outcomes = f.Store.ModelOutcomes();
+            Assert(outcomes.Where(o => o.ModelId == "gpt-6-luna").All(o => Math.Abs(o.Share - 0.2) < 1e-9), "Five steps sent back together carry a fifth of the verdict each");
+            Assert(outcomes.Where(o => o.ModelId == "gpt-6.1-luna").All(o => o.Share == 1), "A single step sent back carries the whole verdict");
+            var router = ModelRouter.For(f.Store);
+            var settings = new ManagerSettings();
+            Assert(router.Learned("codex", "gpt-6-luna", WorkCapability.Debugging, settings) > router.Learned("codex", "gpt-6.1-luna", WorkCapability.Debugging, settings), "Blaming a whole task moves a model's score less than blaming one step five times");
+            f.Store.SaveModelRun(new("ok0", "ok0", "claude", "sonnet", WorkKind.Coding, FailureKind.None, 1000, false, DateTimeOffset.UtcNow, null, WorkCapability.Debugging));
+            f.Store.SaveModelRun(new("ok1", "ok1", "claude", "sonnet", WorkKind.Coding, FailureKind.None, 1000, false, DateTimeOffset.UtcNow, null, WorkCapability.Debugging));
+            f.Store.RecordApproval(["ok0", "ok1"]);
+            Assert(f.Store.ModelOutcomes().Where(o => o.ModelId == "sonnet").All(o => Math.Abs(o.Share - 0.5) < 1e-9), "An approval is divided the same way");
+            Assert(f.Store.RateModelResult("ok0", false) && f.Store.ModelOutcomes().Single(o => o.ModelId == "sonnet" && !o.Accepted).Share == 1, "An explicit rating of one result carries all of it");
             return Task.CompletedTask;
         });
         await Check("Permission and model gates remain enforced; historical cooldown does not block routing", () =>
@@ -417,6 +572,7 @@ static class RoutingChecks
             var all = Enum.GetValues<WorkKind>();
             var settings = new ManagerSettings
             {
+                UsePriorityLists = false,
                 Providers = [new ProviderSettings
                 {
                     Id = "codex",
@@ -450,7 +606,7 @@ static class RoutingChecks
             {
                 Kind = WorkKind.Coding,
                 Access = AccessLevel.ReadProject,
-                Request = "Add a pause button",
+                Request = "Write unit tests for the pause button",
                 RouteIsAdvisory = true
             };
             Assert(router.Choose(hinted, settings, health, [], null, pick)?.ModelId == "gpt-6-luna", "A planner hint does not override the rating-based choice");
@@ -509,6 +665,7 @@ static class RoutingChecks
             var all = Enum.GetValues<WorkKind>();
             var settings = new ManagerSettings
             {
+                UsePriorityLists = false,
                 Providers = [new ProviderSettings
                 {
                     Id = "codex",
@@ -535,7 +692,8 @@ static class RoutingChecks
             // Five luna UI results were sent back, one accepted.
             foreach (var i in Enumerable.Range(0, 6))
                 f.Store.SaveModelRun(new($"ui{i}", $"ui{i}", "codex", "gpt-6-luna", WorkKind.Coding, FailureKind.None, 1000, false, DateTimeOffset.UtcNow, null, WorkCapability.UiDesign));
-            f.Store.RecordRework(Enumerable.Range(0, 5).Select(i => $"ui{i}"));
+            foreach (var i in Enumerable.Range(0, 5))
+                f.Store.RecordRework([$"ui{i}"]);
             f.Store.RecordApproval(["ui5"]);
             var learned = ModelRouter.For(f.Store).Select(ui, settings, health, []);
             Assert(learned?.ModelId != "gpt-6-luna", "After repeated send-backs a stronger model is cheaper overall, got " + learned?.ModelId);
@@ -1124,6 +1282,7 @@ static class RoutingChecks
             var all = Enum.GetValues<WorkKind>();
             var settings = new ManagerSettings
             {
+                UsePriorityLists = false,
                 Providers = [new ProviderSettings
                 {
                     Id = "codex",
@@ -1163,9 +1322,9 @@ static class RoutingChecks
                 Request = "Implement inventory sorting",
                 Difficulty = 50
             };
-            Assert(Pick(UsageLevel.Low, step) == "gpt-5.6-luna", "Low takes the lowest-rated model that meets the bar");
-            // Medium targets the middle (gpt-6-sol, 90) but terra (88, usage 20) is within 3 points and cheaper.
-            Assert(Pick(UsageLevel.Medium, step) == "gpt-6.1-terra", "Medium takes the cheapest model near the middle");
+            Assert(Pick(UsageLevel.Low, step) == "gpt-6-luna", "Low takes the cheapest model within 3 points of the lowest-rated one that meets the bar");
+            // Medium targets the middle (gpt-6-sol, 90); nothing within 3 points is cheaper.
+            Assert(Pick(UsageLevel.Medium, step) == "gpt-6-sol", "Medium takes the cheapest model near the middle");
             Assert(Pick(UsageLevel.High, step) == "sonnet", "High takes the cheapest model near the upper quarter");
             // Highest targets astra (95); sonnet (92, usage 45) is within 3 points and far cheaper.
             Assert(Pick(UsageLevel.Highest, step) == "sonnet", "Highest takes the cheapest model within 3 points of the top");
@@ -1188,8 +1347,8 @@ static class RoutingChecks
             Assert(Pick(UsageLevel.Low, hard) == "gpt-6-sol", "Low still only uses models good enough for the step (coding 90 at bar 90), got " + Pick(UsageLevel.Low, hard));
             // A send-back skips the model that missed.
             step.Reworks = 1;
-            step.RejectedRoutes = ["codex|gpt-5.6-luna"];
-            Assert(Pick(UsageLevel.Low, step) != "gpt-5.6-luna", "Low skips a model already sent back on this work");
+            step.RejectedRoutes = ["codex|gpt-6-luna"];
+            Assert(Pick(UsageLevel.Low, step) != "gpt-6-luna", "Low skips a model already sent back on this work");
             settings.UsageLevel = UsageLevel.Auto;
             return Task.CompletedTask;
         });

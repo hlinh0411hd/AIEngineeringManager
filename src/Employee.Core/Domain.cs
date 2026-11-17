@@ -260,6 +260,14 @@ public sealed class ManagerSettings
     public RoutingPreference RoutingPreference { get; set; } = RoutingPreference.Balanced;
     public UsageLevel UsageLevel { get; set; } = UsageLevel.Auto;
     public bool UsePerformanceHistory { get; set; } = true;
+    // Providers the router uses first. Others (qoder, antigravity, copilot...) only run a step when
+    // none of these can: out of usage, not signed in, disabled or without the needed permission.
+    // Local AI (Ollama) is always eligible. Empty = no tiers.
+    public List<string> PrimaryProviders { get; set; } = ["codex", "claude"];
+    // Per work type model order (see ModelRatings.PriorityFor). Off = lowest expected usage decides.
+    public bool UsePriorityLists { get; set; } = true;
+    // A review is done by a different provider than the one that wrote what it reviews, when one is usable.
+    public bool ReviewByOtherModel { get; set; } = true;
     // Optional JSON ratings source refreshed automatically once a day (see ModelRatingsService).
     public string RatingsSourceUrl { get; set; } = "";
     // Results judged before this time are ignored by learning (Reset learning).

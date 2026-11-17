@@ -78,8 +78,12 @@ public sealed partial class SqliteStore : IEmployeeStore
         // Learning compares each result with what the rating predicted at that step's difficulty.
         if (!runColumns.Contains("difficulty"))
             Execute("ALTER TABLE model_runs ADD COLUMN difficulty INTEGER");
-        if (!Read("PRAGMA table_info(model_feedback)", r => r.GetString(1)).Contains("source"))
+        var feedbackColumns = Read("PRAGMA table_info(model_feedback)", r => r.GetString(1));
+        if (!feedbackColumns.Contains("source"))
             Execute("ALTER TABLE model_feedback ADD COLUMN source TEXT");
+        // Share of a verdict on a whole task that this run carries (1 = all of it; older rows = 1).
+        if (!feedbackColumns.Contains("weight"))
+            Execute("ALTER TABLE model_feedback ADD COLUMN weight REAL");
         MigrateAttachments();
     }
 
