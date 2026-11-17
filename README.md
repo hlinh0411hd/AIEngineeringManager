@@ -271,4 +271,6 @@ Before opening a pull request:
 
 ## License
 
-No license file is currently included in this repository. Add a license before treating the project as open source or reusing it in another project.
+## License
+
+This project is licensed under the [MIT License](LICENSE).
