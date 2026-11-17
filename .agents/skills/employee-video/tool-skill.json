@@ -1,0 +1,24 @@
+{
+  "Id": "employee-video",
+  "Description": "Make videos with TrailerForge: a new MP4 from a topic, a script or the project's own images and clips with its AI video generator, or inspect/export a saved TrailerForge project, and pass the video to later tasks.",
+  "Connector": "video",
+  "Operations": [
+    "inspect",
+    "export",
+    "generate"
+  ],
+  "Keywords": [
+    "video",
+    "trailer",
+    "trailerforge",
+    "clip",
+    "phim",
+    "xuat video",
+    "tao video",
+    "lam video",
+    "teaser",
+    "shorts",
+    "reels",
+    "tiktok"
+  ]
+}

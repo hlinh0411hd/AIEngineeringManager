@@ -1,0 +1,36 @@
+{
+  "Id": "employee-marketing",
+  "Description": "Prepare marketing project/media workflows, drafts and export packages through the connected Marketing backend; publishing requires separate explicit approval.",
+  "Connector": "marketing",
+  "Operations": [
+    "status",
+    "projects",
+    "jobs",
+    "platforms",
+    "queue",
+    "project.create",
+    "media.import",
+    "job.create",
+    "job.run",
+    "job.status",
+    "content.create",
+    "task.status",
+    "content.set",
+    "target.content",
+    "review",
+    "schedule",
+    "target.schedule",
+    "export",
+    "target.publish",
+    "youtube.publish"
+  ],
+  "Keywords": [
+    "marketing",
+    "mang xa hoi",
+    "youtube",
+    "dang bai",
+    "quang cao",
+    "caption",
+    "chien dich"
+  ]
+}

@@ -1,0 +1,9 @@
+# Timeout, attempt limits and media checkpoints
+
+Reported case, 2026-11-02: live read-only database inspection shows the native-art step ran from 20:20:08 to 20:35:09 local time and hit TimeoutSeconds=900. It has used 2 of 4 step attempts; the session used 11 of 20 calls. The separate exhausted 4/4 decision belongs to the older direct task step, not the art step. Thirteen PNG files exist in the selected game's DefenseArt folder. Their existence is not proof that final alpha/size processing, integration or visual QA finished; integration/review steps remain queued.
+
+Source changes: timeout and attempt-limit messages identify which limit triggered and preserve the distinction from provider quota. Approving an exhausted step is rejected before requeueing instead of immediately failing again with the same hidden limit. The settings label now says Attempts per step. After-execution checkpoints retain the current failure diagnosis and the beginning plus latest output rather than only the startup prefix. Resume guidance explicitly reuses valid existing artifacts and finishes missing work.
+
+For the reported saved task, manually increase Timeout (seconds) in Settings > AI & Models if another longer run is desired. Review the Timeout decision for the art step and continue that same task to finish file processing/integration. Only skip the separate older exhausted step if you confirm the newer plan supersedes it; skipping is not approving a completed result. Do not recreate/regenerate all images merely because the attempt timed out.
+
+No limits, pending decisions, task states, account configuration or game files were changed during this investigation. No AI execution, build or test was run. The live SQLite inspection was read-only; an initial immutable snapshot was insufficient for the newest WAL entries, so conclusions use the later live read-only query. Source behavior remains unverified until the user runs a build/check.

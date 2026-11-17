@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+artifacts/
+.vs/
+*.db*
+*.user
+
+Data/
+data-location.json
+data-location.json.*.tmp

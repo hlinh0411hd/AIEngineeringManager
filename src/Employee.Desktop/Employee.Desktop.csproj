@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>AIEmployeeManager</AssemblyName>
+    <ApplicationIcon>Assets/app.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../Employee.Infrastructure/Employee.Infrastructure.csproj" /></ItemGroup>
+  <ItemGroup><Content Include="../../connectors/**" Link="connectors/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><Resource Include="Assets/dashboard-hero.png" /><Resource Include="Assets/app.ico" /></ItemGroup>
+  <ItemGroup><Content Include="Assets/VirtualOffice/*.png" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><Content Include="Assets/VirtualOffice/v2/*.png" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><Content Include="../../AIEmployeeGenerated/ff0cbebcad6449a3a946499e6bef5bdc-57667EAFBDB0.png" Link="Assets/VirtualOffice/office-worker-se.png" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><Content Include="../../AIEmployeeGenerated/c0c3fc8130874b1f98d4f791b4703b5c-FBA0AE198547.png" Link="Assets/VirtualOffice/office-worker-walk-se.png" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><Content Include="../../AIEmployeeGenerated/17cde09564374fc79afe821d8852a2fd-EA4B6E512C1F.png" Link="Assets/VirtualOffice/office-worker-walk-ne.png" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><Content Include="../../AIEmployeeGenerated/a82c52fdaed846ae97663439146ba8a5-6772A1C72149.png" Link="Assets/VirtualOffice/office-worker-seated-typing-se.png" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><Content Include="../../AIEmployeeGenerated/94b3b42f8a564b47aee1da722bbb498b-A5529CC1D41C.png" Link="Assets/VirtualOffice/office-worker-seated-sad-se.png" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><Content Include="../../.agents/skills/**/*" Link="skills/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+</Project>

@@ -1,0 +1,10 @@
+# Task list: deletion, sorting and retention
+
+- Use the row Delete button for one task, or tick tasks and choose Delete selected. Select visible applies to the current page (50 tasks). Confirm before deletion; it cannot be undone. A batch is atomic: a blocked task rejects the whole batch.
+- Delete a root task to remove its steps, session, plans, decisions, logs and handoffs. Shared test jobs keep their remaining task references. External dependencies, running tasks/tests, active sessions and execution leases prevent deletion; stop execution and wait before retrying.
+- Choose Name, CreatedAt, UpdatedAt or State and ascending/descending order. Creation day is the outer group, in UTC; the chosen field sorts within each day. Old records without UpdatedAt use CreatedAt. Equal keys have stable creation-time/ID ordering.
+- Settings → task retention: enter 1–3650 days and save. Default: 7 days. Cleanup runs at startup and hourly, using the latest saved value and creation time. Exactly seven days old is retained; strictly older expires (elapsed 24-hour days, independent of local timezone). Lowering retention can remove older tasks at the next cleanup. Active or blocked tasks survive and are retried later; failures are logged.
+
+Focused verification (no AI or production database): build the solution once, then run `dotnet run --project tests/Employee.Checks --no-build -- --task-lifecycle`. Fixtures use random temporary SQLite paths and remove their own files on exit. This covers data/store behavior and the shared UTC grouping calculation; interactive confirmation, checkbox selection and timer delivery still require a desktop smoke check.
+
+Verification attempt (2026-11-02): `dotnet build AIEmployeeManager.slnx --no-restore -v minimal` failed after the C# compiler was canceled (MSB5021, Employee.Core; 0 compiler errors reported). The output did not identify the cancellation cause. No second build was attempted. The expanded checks were not run against stale binaries, so their runtime result and the desktop build remain unverified. No production database was used for deletion tests.
