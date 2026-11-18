@@ -484,7 +484,7 @@ static class TelegramChecks
             var sid = item.Id[..8];
             Require(buttons.Contains("continue:" + sid) && buttons.Contains("status:" + sid), $"{state} body must carry buttons");
             Require(buttons.Contains("run:" + sid) == (state != WorkState.Completed), $"{state} Run button");
-            Require(body.GetProperty("text").GetString()!.Contains("/status_" + sid), "text hints must remain as fallback");
+            Require(!body.GetProperty("text").GetString()!.Contains("/status_"), "buttons cover commands; no command text in the notice");
             if (state == WorkState.Failed)
             {
                 foreach (var verb in new[] { "continue", "done", "redo", "run", "status" })

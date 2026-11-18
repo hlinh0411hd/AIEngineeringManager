@@ -151,11 +151,11 @@ public sealed class TelegramNotifier
         if (ai.Length > 0)
         {
             lines.Add("");
-            lines.Add("AI says: " + ai);
+            lines.Add("AI says:");
+            foreach (var point in AiPoints(ai))
+                lines.Add(" - " + point);
         }
 
-        lines.Add("");
-        lines.Add(Fallback(notice.State, id));
         return string.Join("\n", lines).TrimEnd();
     }
 
@@ -197,11 +197,19 @@ public sealed class TelegramNotifier
         return text.Length <= max ? text : text[..(max - 1)] + "…";
     }
 
-    // Tappable text commands kept as a fallback for clients that do not show the inline buttons.
-    static string Fallback(WorkState state, string id) =>
-        state == WorkState.Completed
-            ? "/redo_" + id + "  /status_" + id
-            : "/continue_" + id + "  /done_" + id + "  /redo_" + id + "  /close_" + id + (state is WorkState.Failed or WorkState.Paused ? "  /run_" + id : "") + "  /status_" + id;
+    // Splits the AI summary into short bullet points (by line, ';' or sentence end), capped so the message stays compact.
+    static IEnumerable<string> AiPoints(string text)
+    {
+        var parts = System.Text.RegularExpressions.Regex.Split(text.Replace("\r", ""), @"\n+|;\s+|(?<=[.!?])\s+(?=\p{Lu})")
+            .Select(p => p.Trim().TrimStart('-', '*', '•', ' ').Trim())
+            .Where(p => p.Length > 0)
+            .ToList();
+        foreach (var p in parts.Take(5))
+            yield return Clip(p, 160);
+        if (parts.Count > 5)
+            yield return "…";
+    }
+
     public static string ShortId(string workId) => workId[..Math.Min(8, workId.Length)];
 
     // True for network errors, timeouts, HTTP 5xx and 429. Everything else (400, 401, 403, 404...) is permanent.
