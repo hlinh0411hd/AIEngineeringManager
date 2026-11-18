@@ -10,6 +10,9 @@ public sealed record StopNotice(string WorkId, StopNoticeKind Kind, string Title
 
     // Short "done / not done / why" text (see TaskSummary). Filled in by the app before the notice is sent to Telegram.
     public string Summary { get; init; } = "";
+
+    // The user comment this run answers, if any, so the message can say what was done for it.
+    public string LastComment { get; init; } = "";
 }
 
 public static class TaskStopNotices

@@ -1011,6 +1011,7 @@ public partial class MainWindow : Window
         store.RecordApproval([work.Id, ..unified.Steps(work).Where(w => w.State == WorkState.Completed).Select(w => w.Id)]);
         if (work.ToolWorkflowId == null && TaskIntent.Normalize(work.Request).Length >= 3 && !unified.Steps(work).Any(w => w.State == WorkState.Skipped))
             store.LearnIntent(new("", work.ProjectId, work.Request, work.Kind, work.Access, IntentExampleSource.ReviewedCompletion, work.Id, DateTimeOffset.UtcNow));
+        PushCompletedTask(work);
         return true;
     }
 

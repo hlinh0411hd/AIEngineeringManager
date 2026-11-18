@@ -102,9 +102,106 @@ public sealed class TelegramNotifier
         Messages = new(Path.Combine(dataFolder, "telegram-messages.json"));
     }
 
-    public static string Format(StopNotice notice) =>
-        notice.Title + " · #" + ShortId(notice.WorkId) + "\nTask: " + notice.RequestExcerpt + "\n\n" +
-        (string.IsNullOrWhiteSpace(notice.Summary) ? "" : notice.Summary.Trim() + "\n\n") + TelegramCommand.Hints(notice.State, ShortId(notice.WorkId));
+    // Fixed layout so every message reads the same: STATUS, ID, Task, Result, Tested, Done, Next.
+    public static string Format(StopNotice notice)
+    {
+        var id = ShortId(notice.WorkId);
+        var lines = new List<string>
+        {
+            StatusIcon(notice.State) + " " + StatusLabel(notice.State).ToUpperInvariant(),
+            "ID: #" + id,
+            "Task: " + notice.RequestExcerpt
+        };
+        if (!string.IsNullOrWhiteSpace(notice.LastComment))
+            lines.Add("Comment: " + Clip(notice.LastComment, 120));
+
+        string done = "", notDone = "", why = "", tests = "", milestone = "", ai = "";
+        foreach (var raw in (notice.Summary ?? "").Split('\n'))
+        {
+            var line = raw.Trim();
+            string Tail(string prefix) => line[prefix.Length..].Trim();
+            if (line.StartsWith("Done", StringComparison.Ordinal)) done = line.Contains(':') ? line[(line.IndexOf(':') + 1)..].Trim() : "";
+            else if (line.StartsWith("Not done", StringComparison.Ordinal)) notDone = line[(line.IndexOf(':') + 1)..].Trim();
+            else if (line.StartsWith("Why it stopped:", StringComparison.Ordinal)) why = Tail("Why it stopped:");
+            else if (line.StartsWith("Tests:", StringComparison.Ordinal)) tests = Tail("Tests:");
+            else if (line.StartsWith("Milestone", StringComparison.Ordinal)) milestone = line;
+            else if (line.StartsWith("AI result:", StringComparison.Ordinal)) ai = Tail("AI result:");
+        }
+
+        lines.Add("Result: " + ResultLine(notice, notDone, why));
+        lines.Add("Tested: " + (tests.Length == 0 ? "not tested" : tests));
+        if (milestone.Length > 0)
+            lines.Add(milestone);
+        if (done.Length > 0 && !done.StartsWith("nothing finished", StringComparison.OrdinalIgnoreCase))
+        {
+            lines.Add("");
+            lines.Add(notice.LastComment is { Length: > 0 } ? "Done for this comment:" : "Done:");
+            foreach (var item in done.Split("; ", StringSplitOptions.RemoveEmptyEntries))
+                lines.Add(" - " + item);
+        }
+
+        if (notDone.Length > 0)
+        {
+            lines.Add("");
+            lines.Add("Not done / problem:");
+            foreach (var item in notDone.Split("; ", StringSplitOptions.RemoveEmptyEntries))
+                lines.Add(" - " + item);
+        }
+
+        if (ai.Length > 0)
+        {
+            lines.Add("");
+            lines.Add("AI says: " + ai);
+        }
+
+        lines.Add("");
+        lines.Add(Fallback(notice.State, id));
+        return string.Join("\n", lines).TrimEnd();
+    }
+
+    static string ResultLine(StopNotice notice, string notDone, string why) => notice.State switch
+    {
+        WorkState.Completed => "finished",
+        WorkState.NeedsReview => notDone.Length > 0 ? "run finished, some steps not done - needs your review" : "finished - needs your review",
+        WorkState.Failed => "FAILED" + (why.Length > 0 ? ": " + why : ""),
+        WorkState.Paused => "paused" + (why.Length > 0 ? ": " + why : ""),
+        _ => notice.Title + (why.Length > 0 ? ": " + why : "")
+    };
+
+    static string StatusLabel(WorkState state) => state switch
+    {
+        WorkState.Completed => "Completed",
+        WorkState.NeedsReview => "Needs review",
+        WorkState.Failed => "Failed",
+        WorkState.Paused => "Paused",
+        WorkState.AwaitingApproval => "Awaiting approval",
+        WorkState.WaitingForPermission => "Permission needed",
+        WorkState.WaitingForProvider => "Waiting for AI",
+        WorkState.WrongAccess => "Wrong access",
+        WorkState.WrongProject => "Wrong project",
+        _ => state.ToString()
+    };
+
+    static string StatusIcon(WorkState state) => state switch
+    {
+        WorkState.Completed => "✅",
+        WorkState.NeedsReview => "🔍",
+        WorkState.Failed => "❌",
+        WorkState.Paused => "⏸",
+        _ => "⚠️"
+    };
+
+    static string Clip(string text, int max)
+    {
+        text = text.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return text.Length <= max ? text : text[..(max - 1)] + "…";
+    }
+
+    // Tappable text commands kept as a fallback for clients that do not show the inline buttons.
+    static string Fallback(WorkState state, string id) =>
+        state == WorkState.Completed
+            ? "/redo_" + id + "  /status_" + id
+            : "/continue_" + id + "  /done_" + id + "  /redo_" + id + "  /close_" + id + (state is WorkState.Failed or WorkState.Paused ? "  /run_" + id : "") + "  /status_" + id;
     public static string ShortId(string workId) => workId[..Math.Min(8, workId.Length)];
 
     // True for network errors, timeouts, HTTP 5xx and 429. Everything else (400, 401, 403, 404...) is permanent.

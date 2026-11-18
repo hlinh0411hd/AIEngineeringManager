@@ -13,13 +13,15 @@ public sealed class TelegramTaskActions
     private readonly Action<WorkItem?> onChanged;
     private readonly Action onResumed;
     private readonly Func<bool> autonomous;
+    private readonly Action<WorkItem> completed;
 
     // dispatch: runs the function on the thread that owns the task state and returns its result.
     // onChanged: called after every change; null means a plain refresh, a work item means "a new task was created, show it".
     // onResumed: called when a command puts work back in the queue, so the app can clear its "queue suspended" flag.
     // autonomous: whether new tasks get PlanningPolicy.Always.
-    public TelegramTaskActions(TaskExecutionPool tasks, IEmployeeStore store, Func<Func<string>, Task<string>> dispatch, Action<WorkItem?> onChanged, Action? onResumed = null, Func<bool>? autonomous = null)
+    public TelegramTaskActions(TaskExecutionPool tasks, IEmployeeStore store, Func<Func<string>, Task<string>> dispatch, Action<WorkItem?> onChanged, Action? onResumed = null, Func<bool>? autonomous = null, Action<WorkItem>? completed = null)
     {
+        this.completed = completed ?? (_ => { });
         this.tasks = tasks;
         this.store = store;
         this.dispatch = dispatch;
@@ -72,8 +74,9 @@ public sealed class TelegramTaskActions
 
     public Task<string> Complete(string id) => dispatch(() =>
     {
-        tasks.CompleteAnyway(Require(id));
+        var done = tasks.CompleteAnyway(Require(id));
         onChanged(null);
+        completed(done);
         return "Task marked completed.";
     });
 

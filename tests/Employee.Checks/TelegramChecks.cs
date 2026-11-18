@@ -83,8 +83,10 @@ static class TelegramChecks
         Require(summaryText.Contains("Skipped (not needed): 1") && !summaryText.Contains("Tester"), "Summary skipped/tester: " + summaryText);
         Require(summaryText.Split('\n').Length <= 7, "Summary must stay short: " + summaryText);
         var summaryNotice = new StopNotice("abcdef1234567890", StopNoticeKind.NeedsReview, "Result ready for review", "Build the app", WorkState.NeedsReview) { Summary = summaryText };
-        Require(TelegramNotifier.Format(summaryNotice).Contains("Not done (1)"), "Telegram message must carry the summary");
-        Require(!TelegramNotifier.Format(summaryNotice with { Summary = "" }).Contains("Done ("), "No summary, no summary text");
+        Require(TelegramNotifier.Format(summaryNotice).Contains("Not done / problem:") && TelegramNotifier.Format(summaryNotice).Contains("Fix the failing tests"), "Telegram message must carry the summary");
+        var layout = TelegramNotifier.Format(summaryNotice with { LastComment = "also add tests" }).Split('\n');
+        Require(layout[0].Contains("NEEDS REVIEW") && layout[1] == "ID: #abcdef12" && layout[2] == "Task: Build the app" && layout.Any(l => l.StartsWith("Result: ")) && layout.Any(l => l.StartsWith("Tested: ")) && layout.Any(l => l == "Done for this comment:") && layout.Any(l => l.StartsWith("Comment: also add tests")), "Telegram message layout: " + string.Join("|", layout));
+        Require(!TelegramNotifier.Format(summaryNotice with { Summary = "" }).Contains("Done"), "No summary, no summary text");
 
         // The token is stored only as a DPAPI blob.
         var settings = new ManagerSettings();
@@ -140,7 +142,7 @@ static class TelegramChecks
         Require(JsonDocument.Parse(ok.Calls[0].Body).RootElement.GetProperty("text").GetString()!.Contains("#abcdef01"), "Short task id missing");
         var firstBody = JsonDocument.Parse(ok.Calls[0].Body).RootElement;
         Require(firstBody.GetProperty("chat_id").GetInt64() == 42 && firstBody.GetProperty("text").GetString()!.Contains("Do &lt;it&gt;"), "Allowed chat or excerpt missing");
-        Require(firstBody.GetProperty("text").GetString()!.Contains("/done") && firstBody.GetProperty("text").GetString()!.Contains("Reply to this message"), "Command hints missing from the notice");
+        Require(!firstBody.GetProperty("text").GetString()!.Contains("Reply to this message"), "Notice must not repeat the reply hint; the buttons cover it");
         foreach (var (kind, state) in new[] { (StopNoticeKind.Failed, WorkState.Failed), (StopNoticeKind.Paused, WorkState.Paused) })
         {
             var work = new WorkItem { Request = "Fix the build", State = state };

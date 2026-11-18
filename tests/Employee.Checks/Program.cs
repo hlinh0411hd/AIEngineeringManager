@@ -107,6 +107,8 @@ if (args.FirstOrDefault() == "--task-rerun")
     return TaskRerunChecks.Run();
 if (args.FirstOrDefault() == "--telegram")
     return TelegramChecks.Run();
+if (args.FirstOrDefault() == "--git-push")
+    return await GitAutoPushChecks.Run();
 if (args.FirstOrDefault() == "--task-access")
     return TaskAccessChecks.Run();
 if (args.FirstOrDefault() == "--task-lifecycle")
@@ -461,6 +463,7 @@ await Group("--virtual-office", () => Task.FromResult(VirtualOfficeChecks.Run())
 await Group("--access-proposal", () => Task.FromResult(AccessProposalChecks.Run()));
 await Group("--task-rerun", () => Task.FromResult(TaskRerunChecks.Run()));
 await Group("--telegram", () => Task.FromResult(TelegramChecks.Run()));
+await Group("--git-push", GitAutoPushChecks.Run);
 await Group("--task-access", () => Task.FromResult(TaskAccessChecks.Run()));
 await Group("--task-lifecycle", () => { TaskLifecycleEdgeChecks.Run(); return Task.FromResult(TaskLifecycleChecks.Run()); });
 await Group("--step-skip", StepSkipChecks.Run);

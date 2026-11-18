@@ -46,7 +46,7 @@ public partial class MainWindow
     private WorkItem? FindTelegramTask(string id) => store.WorkItems().FirstOrDefault(w => w.Id == id && TelegramTaskActions.IsTopLevel(w));
 
     // The logic lives in Infrastructure so it can be checked headlessly; this only supplies the UI thread and the refresh hooks.
-    private TelegramActions BuildTelegramActions() => new TelegramTaskActions(unified, store, OnUi, OnTelegramChanged, () => queueSuspended = false, () => shellAutonomous).ToActions();
+    private TelegramActions BuildTelegramActions() => new TelegramTaskActions(unified, store, OnUi, OnTelegramChanged, () => queueSuspended = false, () => shellAutonomous, PushCompletedTask).ToActions();
 
     private void OnTelegramChanged(WorkItem? created)
     {
@@ -83,13 +83,25 @@ public partial class MainWindow
         }
     }
 
+    private string SafeLastComment(string workId)
+    {
+        try
+        {
+            return FindTelegramTask(workId)?.Comments.LastOrDefault(c => !c.IsAssistant && !c.IsSummary)?.Text ?? "";
+        }
+        catch (Exception)
+        {
+            return "";
+        }
+    }
+
     // Sends fresh stop notices to Telegram without blocking the UI thread. NotifyAsync never throws.
     private void NotifyTelegram(IEnumerable<StopNotice> notices)
     {
         if (telegram == null || !settings.Telegram.Enabled)
             return;
         // The summary is read here, on the UI thread, where the task store is consistent.
-        var batch = notices.Select(n => n with { Summary = SafeSummary(n.WorkId) }).ToArray();
+        var batch = notices.Select(n => n with { Summary = SafeSummary(n.WorkId), LastComment = SafeLastComment(n.WorkId) }).ToArray();
         if (batch.Length == 0)
             return;
         var notifier = telegram;
