@@ -76,6 +76,12 @@ public sealed class ModelRouter(IReadOnlyList<ModelReliability>? reliability = n
     // With "Use AI CLIs" off, stale health from an earlier detection must not route to a CLI.
     public static IReadOnlyList<ProviderHealth> Usable(IReadOnlyList<ProviderHealth> health, ManagerSettings settings) => health.Where(h => !h.ExcludedBySetting && (settings.UseAiCli || !ManagerSettings.IsCli(h.Id))).ToArray();
     private static bool CompatibleProjectRole(WorkItem work, ProviderSettings provider, ModelInfo model) => provider.Id != "ollama" && model.Kinds.Contains(WorkKind.Coding) && ((work.Kind == WorkKind.Review && (work.Access is AccessLevel.ReadProject or AccessLevel.WriteProject)) || (work.Access == AccessLevel.ReadProject && (work.Kind == WorkKind.Research || (work.Kind == WorkKind.Planning && work.IsCoordinator))));
+    // The first send-backs of a step do not make it harder (a model can need a couple of rounds of
+    // changes); every further send-back and every escalation adds a few points (at most four count).
+    public const int FreeSendBacks = 2;
+    public const int DifficultyPerSendBack = 3;
+    // The step's difficulty after send-backs and escalations; 100 at most.
+    public static int EffectiveDifficulty(WorkItem work) => Math.Min(100, work.DifficultyScore + DifficultyPerSendBack * Math.Min(Math.Max(0, work.Reworks - FreeSendBacks) + work.Escalations, 4));
     // Learned quality (rating + offset) of one catalog model for a work type; 0 when unknown or unable.
     public int QualityOf(string providerId, string modelId, WorkCapability capability, ManagerSettings settings)
     {
@@ -93,10 +99,12 @@ public sealed class ModelRouter(IReadOnlyList<ModelReliability>? reliability = n
         if (work.Kind is WorkKind.Classification or WorkKind.Extraction && !work.IsCoordinator && work.Access == AccessLevel.WriteProject && TaskIntent.RequiresImplementation(work.Request))
             return null;
         var effort = work.RoutingEffort;
-        var difficulty = work.DifficultyScore;
+        var baseDifficulty = work.DifficultyScore;
+        var difficulty = EffectiveDifficulty(work);
         var capability = work.Capability;
-        // Each send-back on this work raises the bar so it moves to a stronger model.
-        var required = Math.Min(99, ModelRatings.RequiredQuality(difficulty, settings.RoutingPreference) + 6 * Math.Min(work.Reworks + work.Escalations, 4));
+        // Each send-back or escalation makes the work count as harder; the bar and the model order's
+        // difficulty caps are then applied to that raised difficulty like to any other work.
+        var required = Math.Min(99, ModelRatings.RequiredQuality(difficulty, settings.RoutingPreference));
         var eligible =
             from p in settings.Providers
             let h = health.FirstOrDefault(x => x.Id == p.Id)
@@ -231,7 +239,7 @@ public sealed class ModelRouter(IReadOnlyList<ModelReliability>? reliability = n
         }
 
         var reason = tierNote + reviewNote + (compatible ? $"Compatible role: permitted Coding model handles {work.Kind} with already approved {work.Access}; no project access or model catalog changed. " : "");
-        return best is null ? null : new(best.p.Id, best.m.Id, reason + $"Rule-based: kind={work.Kind}; capability={capability}; difficulty={difficulty}/100 ({effort}); usage level={level}; required {capability} quality={required}{(work.Reworks + work.Escalations > 0 ? $" (raised after {work.Reworks} send-back(s) and {work.Escalations} escalation(s))" : "")}; " + (best.m.RoleRank(work.Kind) == 2 ? "manual primary role; " : best.Quality == 0 ? "no permitted worker can do " + capability + "; " : how + "; ") + $"quality={best.Quality}; usage rank={best.Cost}; first-try acceptance≈{best.Chance:P0}; expected usage={best.Expected:F0}; priority={best.p.Priority}; rating={best.m.RatingSource}. Approvals and send-backs for this model and work type refine the estimate. No AI call.");
+        return best is null ? null : new(best.p.Id, best.m.Id, reason + $"Rule-based: kind={work.Kind}; capability={capability}; difficulty={difficulty}/100 ({effort}){(work.Reworks + work.Escalations > 0 ? $", raised from {baseDifficulty} after {work.Reworks} send-back(s) and {work.Escalations} escalation(s)" : "")}; usage level={level}; required {capability} quality={required}; " + (best.m.RoleRank(work.Kind) == 2 ? "manual primary role; " : best.Quality == 0 ? "no permitted worker can do " + capability + "; " : how + "; ") + $"quality={best.Quality}; usage rank={best.Cost}; first-try acceptance≈{best.Chance:P0}; expected usage={best.Expected:F0}; priority={best.p.Priority}; rating={best.m.RatingSource}. Approvals and send-backs for this model and work type refine the estimate. No AI call.");
     }
 
     // The one routing decision every flow uses (run, resume, approval, planning, assignment). A

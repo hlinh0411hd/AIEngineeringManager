@@ -235,10 +235,42 @@ AIEmployeeManager/
 └── Run.bat                          # Launch the newest local desktop build
 ```
 
+## Telegram notifications and chat control
+
+The app can message you on Telegram when a task stops (approval needed, review ready, failed, paused, and so on) and lets you answer in the same chat. Telegram is off until you set it up. Full details: [docs/TELEGRAM.md](docs/TELEGRAM.md).
+
+**Setup**
+
+1. In Telegram, ask **@BotFather** for `/newbot` and copy the bot token.
+2. In the app open **Settings > Notifications > Telegram** and paste the token in **Bot token**. It is stored encrypted with Windows DPAPI for the current user.
+3. Send `/start` to your new bot, then click **Find chat ID** in the app (or type the chat ID by hand).
+4. Tick **Enable Telegram notifications**, choose **Notify on completed tasks**, and click **Save Telegram settings**.
+5. Click **Send test message** to confirm. Only the one allowed chat is handled; all other chats are ignored.
+
+**Commands** (reply to a notification, or add `#shortid` / use the tappable `/command_<id>` form)
+
+| Send | Effect |
+|---|---|
+| Plain reply | Adds your text as a comment and queues the task to continue |
+| `/continue [text]` | Continues the task, optionally with a comment |
+| `/redo <text>` | Asks for changes and queues the task |
+| `/done` | Marks the task completed |
+| `/close [reason]` | Closes the task as cancelled |
+| `/run` | Queues the task to run |
+| `/status` | Shows state, request and summary |
+| `/projects` | Lists registered projects |
+| `/new <project> <request>` | Creates and queues a new task |
+| `/help` | Shows the command list |
+
+**Inline buttons.** Each notification also carries buttons under the message. Completed tasks show Continue and Status. Other states show Continue, Done, Redo, Close and Status, and Failed or Paused tasks add Run. Done and Close ask for confirmation first: the first tap swaps the buttons to Confirm and Cancel, and only Confirm runs the action. Redo sends a reply prompt, and your reply becomes the comment that requeues the task. Typed commands and replies still work as in the table above.
+
+The chat ID is the only authentication, so use a private chat. Button taps, like messages, are accepted only from the paired chat; taps from any other chat do nothing. Telegram works only while the app is open.
+
 ## Documentation guide
 
 - [Architecture](docs/ARCHITECTURE.md) — application layers, state, process control, storage, and safety boundaries.
 - [AI routing](docs/ROUTING.md) — how models are chosen, the model order per work type, ratings files, learning, and fallback.
+- [Telegram](docs/TELEGRAM.md) — stop notifications and chat control: setup, commands, security, retries, and troubleshooting.
 - [Tool and API integrations](docs/INTEGRATIONS.md) — provider and connector inventory, configuration, and known limitations.
 - [V2 task execution](docs/V2.md) — planning, budgets, approvals, queue behavior, and execution limits.
 - [V3–V4 setup and behavior](docs/V3-V4.md) — dashboard, connectors, local updates, and implementation boundaries.

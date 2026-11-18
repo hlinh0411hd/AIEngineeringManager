@@ -21,7 +21,7 @@ public sealed class RequestRefiner(IEmployeeStore store, IReadOnlyList<IAIProvid
             context.AppendLine("Task request: " + Clip(task.Request, 1500));
             foreach (var comment in task.Comments.Where(c => !c.IsAssistant).TakeLast(3))
                 context.AppendLine("Earlier user comment: " + Clip(comment.Text, 500));
-            var lastResult = task.Comments.LastOrDefault(c => c.IsAssistant);
+            var lastResult = task.Comments.LastOrDefault(c => c.IsAssistant && !c.IsSummary);
             if (lastResult != null)
                 context.AppendLine("Latest result summary: " + Clip(lastResult.Text, 800));
             if (task.ToolPreset is { } preset)

@@ -41,6 +41,7 @@ public partial class MainWindow
         }
 
         noticeJournal ??= new();
+        InitializeTelegram();
         WindowsNotifications.IsChecked = noticeJournal.WindowsEnabled;
         if (!smoke)
             SourceInitialized += (_, _) => windowsNotification = new(this, OpenNotifications);
@@ -58,34 +59,21 @@ public partial class MainWindow
             return;
         var changed = false;
         var fresh = new List<Notice>();
+        var stops = new List<StopNotice>();
         foreach (var work in tasks)
         {
             var decisions = unified.Decisions(work).Select(d => d.Id).Order().ToArray();
-            var signature = work.State + ":" + string.Join(",", decisions);
+            var signature = TaskStopNotices.Signature(work, decisions);
             var known = noticeJournal.Seen.TryGetValue(work.Id, out var previous);
             if (known && previous == signature)
                 continue;
             noticeJournal.Seen[work.Id] = signature;
             changed = true;
-            // Resolving a decision must not reannounce the remaining pending decisions.
-            if (known && previous!.Split(':')[0] == work.State.ToString() && decisions.All(id => previous[(previous.IndexOf(':') + 1)..].Split(',').Contains(id)))
+            var stop = TaskStopNotices.Evaluate(work, decisions, known ? previous : null);
+            if (stop == null)
                 continue;
-            var title = work.State == WorkState.WrongAccess ? "Wrong access - correct task permissions" : work.State == WorkState.WrongProject ? "Wrong project - correct project/folder" : work.State == WorkState.WaitingForProvider ? "Waiting for AI - see usage/auth/availability reason" : decisions.Length > 0 ? "Approval needed" : work.State switch
-            {
-                WorkState.AwaitingApproval => "Approval needed to continue",
-                WorkState.WaitingForPermission => "Permission needed",
-                WorkState.NeedsReview => "Result ready for review",
-                WorkState.Failed => "Task failed",
-                WorkState.WaitingForProvider => "Waiting for an available AI",
-                WorkState.Paused => "Task paused",
-                WorkState.Completed => "Task completed",
-                _ => null
-            };
-            // On first launch, surface only outstanding attention, not old completed work.
-            if (title == null || (!known && work.State == WorkState.Completed))
-                continue;
-            var request = work.Request.Replace('\r', ' ').Replace('\n', ' ');
-            fresh.Add(new(work.Id, title + " · " + request[..Math.Min(100, request.Length)], DateTimeOffset.UtcNow));
+            fresh.Add(new(stop.WorkId, stop.HistoryText, DateTimeOffset.UtcNow));
+            stops.Add(stop);
         }
 
         noticeJournal.Items.InsertRange(0, fresh);
@@ -100,6 +88,8 @@ public partial class MainWindow
         if (changed)
             SaveNotifications();
         UpdateNotificationBadge();
+        if (alert)
+            NotifyTelegram(stops);
         if (alert && noticeJournal.WindowsEnabled && fresh.Count > 0)
             foreach (var notice in fresh)
                 windowsNotification?.Show("AI Employee Manager", notice.Title, () => OpenNotice(notice));

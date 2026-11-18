@@ -103,7 +103,11 @@ A cheap model that keeps missing costs more than a strong model that gets it rig
 does not just take the cheapest model that looks good enough:
 
 ```
-bar         = 50 + 0.45 × difficulty  (Economy −6, Performance +6)  + 6 per send-back of this work (max 4)
+difficulty  = step difficulty + 3 per send-back of this step after the first 2, and 3 per escalation (max 4 counted, capped at 100)
+              (a planner's rating counts at most 20 points above the rule-based estimate; a send-back raises
+              only the step that is redone, not the other steps of a large task)
+bar         = 50 + 0.45 × difficulty  (Economy −6, Performance +6)
+              (the raised difficulty is also what the model order's "@69" caps and the Light/Standard/Heavy bands see)
 quality     = rating for the work type + learned offset (below)
 acceptance  = 1 / (1 + e^(−(quality − bar)/5)), clamped 5–95%
               × 0.4 if this model's result was already sent back on this work

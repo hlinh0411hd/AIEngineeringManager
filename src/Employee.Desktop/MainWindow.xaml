@@ -865,7 +865,7 @@
          <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#B8B0CF" Margin="0,8,0,8" x:Name="ModelDiscoveryNote" />
          <TextBlock Text="AI CLIs" Margin="0,18,0,0" FontSize="22" FontWeight="SemiBold" />
          <TextBlock Text="Choose whether tasks may call installed AI command-line tools (Codex, Claude, Copilot, Gemini, OpenCode, Freebuff, CommandCode, Qoder, Antigravity). When off, no CLI is started: not for tasks, detection, model listing, plan drafts or request refinement. Local AI (Ollama) is not a CLI and stays available. The choice applies immediately." TextWrapping="Wrap" Margin="0,10,0,8" />
-         <RadioButton x:Name="UseCliChoice" Content="Use AI CLIs" GroupName="CliMode" Margin="0,4" Checked="CliModeChanged" />
+         <RadioButton x:Name="UseCliChoice" Content="Use AI CLIs" GroupName="CliMode" Margin="0,4" Checked="CliModeChanged" Unchecked="CliModeChanged" />
          <RadioButton x:Name="NoCliChoice" Content="Do not use AI CLIs" GroupName="CliMode" Margin="0,4" />
          <TextBlock Text="Each CLI" Margin="0,14,0,0" FontSize="16" FontWeight="SemiBold" />
          <TextBlock Text="Tick a CLI to let tasks use it; untick it and it gets no requests. Changes apply immediately, and Detect never turns an unticked CLI back on." TextWrapping="Wrap" Foreground="#B8B0CF" Margin="0,4,0,6" />
@@ -1038,6 +1038,22 @@
        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="20" MaxWidth="1150" HorizontalAlignment="Stretch">
          <CheckBox x:Name="WindowsNotifications" Content="Show Windows notifications when tasks need attention" Click="ToggleWindowsNotifications" />
+         <TextBlock Text="Telegram" FontSize="16" FontWeight="SemiBold" Margin="0,24,0,4" />
+         <TextBlock Text="Send a message to your Telegram chat when a task stops. Create a bot with @BotFather, then enter its token and your chat ID." TextWrapping="Wrap" Margin="0,0,0,8" />
+         <CheckBox x:Name="TelegramEnabled" Content="Enable Telegram notifications" Margin="0,0,0,8" />
+         <TextBlock Text="Bot token" Margin="0,4,0,2" />
+         <PasswordBox x:Name="TelegramToken" MaxWidth="520" HorizontalAlignment="Left" />
+         <TextBlock x:Name="TelegramTokenHint" Margin="0,2,0,0" Opacity="0.75" TextWrapping="Wrap" />
+         <TextBlock Text="Allowed chat ID" Margin="0,8,0,2" />
+         <StackPanel Orientation="Horizontal">
+          <TextBox x:Name="TelegramChatId" Width="260" HorizontalAlignment="Left" />
+          <Button x:Name="TelegramFindChatButton" Content="Find chat ID" Click="FindTelegramChatId" Margin="8,0,0,0" ToolTip="Send /start to your bot first, then click. Fills the box from the latest message." />
+         </StackPanel>
+         <CheckBox x:Name="TelegramNotifyCompleted" Content="Notify on completed tasks" Margin="0,8,0,8" />
+         <StackPanel Orientation="Horizontal">
+          <Button Content="Save Telegram settings" Click="SaveTelegramSettings" Margin="0,0,8,0" />
+          <Button x:Name="TelegramTestButton" Content="Send test message" Click="TestTelegram" />
+         </StackPanel>
         </StackPanel>
        </ScrollViewer>
       </TabItem>

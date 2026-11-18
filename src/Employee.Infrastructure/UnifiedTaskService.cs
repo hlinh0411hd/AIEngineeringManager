@@ -230,7 +230,7 @@ public sealed class UnifiedTaskService
                     Kind = needsEdits ? WorkKind.Coding : goal.Kind,
                     Access = goal.IsExternal ? AccessLevel.TextOnly : editSession.AccessCeiling,
                     Priority = 100,
-                    Reworks = goal.Reworks,
+                    Reworks = InheritedReworks(goal, Steps(goal)),
                     RejectedRoutes = [..goal.RejectedRoutes],
                     Request = "Handle only the latest user comment. Continue from the current files and preserve previous work. Latest user comment:\n" + text,
                     Milestone = MilestoneView.Current(editSession),
@@ -270,15 +270,16 @@ public sealed class UnifiedTaskService
                 var updateSession = SessionFor(goal)!;
                 if (updateSession.StepLimitReached(steps))
                     throw new InvalidOperationException("Task step limit reached; create a new task for this update.");
-                store.SaveWork(new WorkItem { ProjectId = goal.ProjectId, SessionId = updateSession.Id, ParentTaskId = goal.Id, Request = goal.Request, Kind = goal.Kind, Access = goal.Access, Priority = goal.Priority, Reworks = goal.Reworks, RejectedRoutes = [..goal.RejectedRoutes], PreferredRoute = goal.PreferredRoute, RoutingApproved = goal.RoutingApproved, DelegationAllowed = updateSession.AllowDelegation });
+                store.SaveWork(new WorkItem { ProjectId = goal.ProjectId, SessionId = updateSession.Id, ParentTaskId = goal.Id, Request = goal.Request, Kind = goal.Kind, Access = goal.Access, Priority = goal.Priority, Reworks = InheritedReworks(goal, steps), RejectedRoutes = [..goal.RejectedRoutes], PreferredRoute = goal.PreferredRoute, RoutingApproved = goal.RoutingApproved, DelegationAllowed = updateSession.AllowDelegation });
             }
 
             if (target != null)
             {
                 target.State = WorkState.Paused;
                 target.Verification = VerificationState.Untested;
-                target.Reworks = Math.Max(target.Reworks, goal.Reworks);
-                target.RejectedRoutes = [..target.RejectedRoutes.Union(goal.RejectedRoutes)];
+                // Only the step that is redone counts as sent back: its difficulty rises, not the other steps'.
+                target.Reworks++;
+                target.RejectedRoutes = [..target.RejectedRoutes.Union(target.ProviderId == null ? [] : [target.ProviderId + "|" + (target.ModelId ?? "")])];
                 store.SaveWork(target);
                 foreach (var decision in Decisions(goal).Where(d => d.WorkId == target.Id && d.Kind == "Review"))
                 {
@@ -316,6 +317,11 @@ public sealed class UnifiedTaskService
 
     // A change request on a result the user has not approved means that result missed: the models
     // that produced it are recorded as a miss for their work type, and the task escalates.
+    // A step made for a comment redoes the sent-back work. In a task of one step (or none) it carries
+    // the task's send-backs; in a task of several steps it is one new step and starts with a single
+    // send-back, so one comment does not make every step of a large task harder.
+    private static int InheritedReworks(WorkItem goal, IReadOnlyList<WorkItem> steps) => steps.Count <= 1 ? goal.Reworks : Math.Min(goal.Reworks, 1);
+
     private void SendBack(WorkItem goal)
     {
         var steps = Steps(goal);
@@ -854,7 +860,10 @@ public sealed class UnifiedTaskService
             if (approved)
             {
                 goal.RoutingApproved = true;
-                goal.PreferredRoute = selected ?? (goal.ProviderId == null ? goal.PreferredRoute : new Route(goal.ProviderId, goal.ModelId ?? "", "User approved", AutoModel: string.IsNullOrWhiteSpace(goal.ModelId)));
+                // Approving a proposed worker pins it. Once the task has steps, the goal's provider/model is
+                // the planner's own run, not a worker the user was shown: pinning it would send every later
+                // step to the planner's model whatever its difficulty.
+                goal.PreferredRoute = selected ?? (goal.ProviderId == null || Steps(goal).Count > 0 ? goal.PreferredRoute : new Route(goal.ProviderId, goal.ModelId ?? "", "User approved", AutoModel: string.IsNullOrWhiteSpace(goal.ModelId)));
                 store.SaveWork(goal);
             }
 
@@ -1018,7 +1027,7 @@ public sealed class UnifiedTaskService
                         Kind = goal.Kind,
                         Access = goal.Access,
                         Priority = goal.Priority,
-                        Reworks = goal.Reworks,
+                        Reworks = InheritedReworks(goal, Steps(goal)),
                         RejectedRoutes = [..goal.RejectedRoutes],
                         PreferredRoute = goal.PreferredRoute,
                         RoutingApproved = goal.RoutingApproved || approved,
@@ -1384,6 +1393,7 @@ public sealed class UnifiedTaskService
         goal.State = outcome;
         goal.QueuedAt = null;
         goal.Notes = "Closed by the user: " + label + "." + (reason.Length > 0 ? " Reason: " + reason[..Math.Min(1000, reason.Length)] : "");
+        AddSummaryComment(goal);
         store.SaveWork(goal);
         store.Log(goal.Id, "TaskClosed", goal.Notes);
         Changed?.Invoke();
@@ -1412,6 +1422,7 @@ public sealed class UnifiedTaskService
         goal.State = WorkState.Completed;
         goal.QueuedAt = null;
         goal.Notes = "User marked the result reviewed and complete" + (open + waiting > 0 ? $" ({open} unfinished step(s) and {waiting} waiting decision(s) closed)." : ".");
+        AddSummaryComment(goal);
         store.SaveWork(goal);
         store.Log(goal.Id, "UserReview", goal.Notes);
         Changed?.Invoke();
@@ -1443,6 +1454,8 @@ public sealed class UnifiedTaskService
     {
         var goal = store.WorkItems().Single(w => w.Id == goalId);
         SaveResultComments(goal);
+        if (goal.SessionId == null && AddSummaryComment(goal))
+            store.SaveWork(goal);
         if (goal.SessionId == null || goal.State == WorkState.Completed || (goal.State == WorkState.Queued && goal.QueuedAt != null))
             return;
         var session = SessionFor(goal)!;
@@ -1497,7 +1510,31 @@ public sealed class UnifiedTaskService
             goal.BlockReason = session.Notes;
         goal.Notes = $"{steps.Count(w => w.State is WorkState.Completed or WorkState.Skipped)}/{steps.Count} steps finished (including skipped) · AI {session.CallBudgetDisplay} · {decisions.Count} pending approvals. {session.Notes}";
         goal.Verification = steps.Count > 0 && steps.All(w => w.State != WorkState.Skipped && w.Verification == VerificationState.Verified) ? VerificationState.Verified : steps.Any(w => w.Verification is VerificationState.Verified or VerificationState.PartiallyTested) ? VerificationState.PartiallyTested : steps.Count > 0 ? VerificationState.Implemented : VerificationState.Untested;
+        AddSummaryComment(goal);
         store.SaveWork(goal);
+    }
+
+    // Live done / not done / why text for a task (not stored). Used by the Telegram status and notices.
+    public string Summary(WorkItem input, bool includeLastResult = false)
+    {
+        var goal = GoalFor(store.WorkItems().Single(w => w.Id == input.Id));
+        return TaskSummary.Build(goal, Steps(goal), SessionFor(goal), store.Logs(goal.Id), includeLastResult);
+    }
+
+    // Adds a short summary comment when the task stops (review, failed, paused, waiting, closed) and the
+    // summary differs from the last one. The "Why it stopped" line is ignored for that comparison so a
+    // changing progress note does not add a new comment each time. The caller saves the task.
+    private bool AddSummaryComment(WorkItem goal)
+    {
+        if (goal.State is WorkState.Running or WorkState.Queued or WorkState.Saved or WorkState.Delegated or WorkState.Skipped)
+            return false;
+        var body = TaskSummary.Build(goal, Steps(goal), SessionFor(goal), store.Logs(goal.Id));
+        var text = TaskSummary.Heading + " · " + TaskOutcomes.Label(goal.State) + "\n" + body;
+        static string Stable(string t) => string.Join("\n", t.Split('\n').Where(l => !l.StartsWith("Why it stopped:", StringComparison.Ordinal) && !l.StartsWith("Tests:", StringComparison.Ordinal)));
+        if (goal.Comments.LastOrDefault(c => c.IsSummary) is { } last && Stable(last.Text) == Stable(text))
+            return false;
+        goal.Comments.Add(new(text, [], DateTimeOffset.UtcNow) { IsAssistant = true, IsSummary = true, SourceWorkId = goal.Id });
+        return true;
     }
 
     private void SaveResultComments(WorkItem goal)

@@ -1109,6 +1109,7 @@ public partial class MainWindow : Window
         }
 
         closing = true;
+        StopTelegramCommands();
         taskRetentionTimer.Stop();
         outputTimer.Stop();
         controlCenter?.Dispose();

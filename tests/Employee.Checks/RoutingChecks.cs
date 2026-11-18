@@ -151,6 +151,7 @@ static class RoutingChecks
             {
                 Kind = WorkKind.Coding,
                 Access = AccessLevel.ReadProject,
+                Request = "Build the whole game from scratch",
                 Difficulty = 95
             };
             Assert(hard.DifficultyScore == 95 && hard.RoutingEffort == WorkEffort.Heavy);
@@ -312,6 +313,25 @@ static class RoutingChecks
             rejected.Reworks = 1;
             rejected.RejectedRoutes = ["claude|haiku"];
             Assert(router.Select(rejected, withHaiku, health, [])?.ModelId == "sonnet", "A model whose result was sent back is skipped for this step");
+            // A send-back raises the step's difficulty; the model order's difficulty caps then apply to it.
+            var architecture = Step(66, "Architecture");
+            Assert(router.Select(architecture, settings, health, [])?.ModelId == "sonnet", "Architecture at difficulty 66 is a Sonnet step");
+            architecture.Reworks = 2;
+            Assert(ModelRouter.EffectiveDifficulty(architecture) == 66 && router.Select(architecture, settings, health, [])?.ModelId == "sonnet", "The first two send-backs do not raise the difficulty");
+            architecture.Reworks = 3;
+            var raised = router.Select(architecture, settings, health, []);
+            Assert(ModelRouter.EffectiveDifficulty(architecture) == 69 && raised?.ModelId == "sonnet", "The third send-back adds 3 points (69), still at the order's cap");
+            architecture.Reworks = 4;
+            raised = router.Select(architecture, settings, health, []);
+            Assert(ModelRouter.EffectiveDifficulty(architecture) == 72 && raised?.ModelId == "opus" && raised.Reason.Contains("raised from 66"), "The fourth crosses the cap of 69 and moves to Opus: " + raised?.ModelId);
+            var mild = Step(50, "Architecture");
+            mild.Reworks = 2;
+            Assert(router.Select(mild, settings, health, [])?.ModelId == "sonnet", "Two send-backs on a medium step do not jump to Opus");
+            var escalatedStep = Step(68, "Architecture");
+            escalatedStep.Escalations = 1;
+            Assert(ModelRouter.EffectiveDifficulty(escalatedStep) == 71, "An escalation counts at once");
+            Assert(ModelRouter.EffectiveDifficulty(new WorkItem { Request = "Build it from scratch", Difficulty = 99, Reworks = 9 }) == 100, "Raised difficulty stops at 100");
+            Assert(new WorkItem { Request = "Work on the game", Kind = WorkKind.Coding, Difficulty = 95 }.DifficultyScore == 70, "A planner rating is capped 20 points above the rule-based estimate (50)");
             // Claude and Codex first: another AI only runs when neither can.
             var onlyClaude = router.Select(Step(50), settings, health, [], new HashSet<string> { "codex" });
             Assert(onlyClaude?.ProviderId == "claude", "With Codex out, Claude takes the step, not the other AIs");
@@ -1253,7 +1273,7 @@ static class RoutingChecks
             {
                 Kind = WorkKind.Coding,
                 Access = AccessLevel.ReadProject,
-                Request = "Rebuild the main menu UI layout",
+                Request = "Rebuild the main menu UI layout from scratch",
                 Difficulty = 90
             };
             // Twenty approved easy UI tweaks barely move luna: they were expected.
@@ -1341,7 +1361,7 @@ static class RoutingChecks
             {
                 Kind = WorkKind.Coding,
                 Access = AccessLevel.ReadProject,
-                Request = "Implement inventory sorting",
+                Request = "Implement inventory sorting from scratch",
                 Difficulty = 90
             };
             Assert(Pick(UsageLevel.Low, hard) == "gpt-6-sol", "Low still only uses models good enough for the step (coding 90 at bar 90), got " + Pick(UsageLevel.Low, hard));

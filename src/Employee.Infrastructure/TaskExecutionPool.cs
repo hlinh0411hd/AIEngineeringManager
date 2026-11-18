@@ -236,7 +236,7 @@ public sealed class TaskExecutionPool
             if (approved)
             {
                 goal.RoutingApproved = true;
-                goal.PreferredRoute = route ?? (goal.ProviderId == null ? goal.PreferredRoute : new Route(goal.ProviderId, goal.ModelId ?? "", "User approved", AutoModel: string.IsNullOrWhiteSpace(goal.ModelId)));
+                goal.PreferredRoute = route ?? (goal.ProviderId == null || Steps(goal).Count > 0 ? goal.PreferredRoute : new Route(goal.ProviderId, goal.ModelId ?? "", "User approved", AutoModel: string.IsNullOrWhiteSpace(goal.ModelId)));
             }
 
             goal.Notes = "Queued until an agent slot and independent project are available; progress preserved.";
@@ -388,6 +388,7 @@ public sealed class TaskExecutionPool
     public void RenewTime(WorkItem work, int minutes) => Service(work).RenewTime(work, minutes);
     public bool CanComplete(WorkItem work) => !IsRunning(GoalFor(work).Id) && reader.CanComplete(work);
     public (int Steps, int Decisions) OpenWork(WorkItem work) => reader.OpenWork(work);
+    public string Summary(WorkItem work, bool includeLastResult = false) => reader.Summary(work, includeLastResult);
     public WorkItem CompleteAnyway(WorkItem work)
     {
         lock (gate)

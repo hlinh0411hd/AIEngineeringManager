@@ -7,6 +7,8 @@ public static class WorkComplexity
     private static readonly string[] HarderSignals = Vocabulary.HarderWork;
     public const int LightBelow = 35;
     public const int HeavyFrom = 70;
+    // How many points above the rule-based estimate a planner's rating may go.
+    public const int PlannerMargin = 20;
     // 0-100 difficulty of one step. The planner's per-step rating is used when present;
     // otherwise a rule-based estimate. An explicit user effort always bounds the result.
     public static int Score(WorkItem work)
@@ -14,9 +16,6 @@ public static class WorkComplexity
         var request = " " + TaskIntent.Normalize(work.Request) + " ";
         bool Has(string[] signals) => signals.Any(signal => request.Contains(" " + signal + " ", StringComparison.Ordinal));
         int score;
-        if (work.Difficulty is { } rated)
-            score = rated;
-        else
         {
             score = work.Kind switch
             {
@@ -40,6 +39,11 @@ public static class WorkComplexity
             else if (Has(LightSignals))
                 score = Math.Min(score, 25);
         }
+
+        // The planner's rating replaces the estimate, but may not run far above it: a planner that
+        // rates every step high would otherwise send ordinary work to the strongest models.
+        if (work.Difficulty is { } rated)
+            score = Math.Min(rated, score + PlannerMargin);
 
         if (work.Kind == WorkKind.Planning)
             score = Math.Max(score, 75);

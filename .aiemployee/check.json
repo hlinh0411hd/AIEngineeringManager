@@ -1,0 +1,1 @@
+{"name":"Employee checks","executable":"dotnet","arguments":["run","--project","tests/Employee.Checks"],"timeoutSeconds":300}

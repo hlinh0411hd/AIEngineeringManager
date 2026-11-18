@@ -621,13 +621,19 @@ public sealed class PlanningService(IEmployeeStore store, IAutonomyStore autonom
                 }
             };
         }).ToArray();
-        // Steps of a task the user sent back inherit its escalation.
-        if (session.RootWorkId != null && store.WorkItems().FirstOrDefault(w => w.Id == session.RootWorkId)is { Reworks: > 0 } root)
+        // A step that redoes an earlier step the user sent back (same plan key or same request) keeps that
+        // step's send-backs. The other steps of a re-plan start fresh: one send-back does not make a
+        // whole large task harder.
+        if (session.RootWorkId != null)
+        {
+            var sentBack = store.WorkItems().Where(w => w.ParentTaskId == session.RootWorkId && w.Reworks > 0).ToList();
             foreach (var task in tasks)
-            {
-                task.Reworks = root.Reworks;
-                task.RejectedRoutes = [..root.RejectedRoutes];
-            }
+                if (sentBack.Where(w => (w.PlanKey != null && w.PlanKey == task.PlanKey) || string.Equals(w.Request.Trim(), task.Request.Trim(), StringComparison.OrdinalIgnoreCase)).MaxBy(w => w.Reworks) is { } earlier)
+                {
+                    task.Reworks = earlier.Reworks;
+                    task.RejectedRoutes = [..earlier.RejectedRoutes];
+                }
+        }
 
         autonomy.ApprovePlanAtomically(planId, tasks);
     }

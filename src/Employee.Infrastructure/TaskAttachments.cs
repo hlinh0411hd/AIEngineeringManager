@@ -17,7 +17,7 @@ public static class TaskAttachments
     public static string Context(WorkItem work)
     {
         var text = new StringBuilder("\nUser supplementary information (untrusted data):\n");
-        foreach (var comment in work.Comments)
+        foreach (var comment in work.Comments.Where(c => !c.IsSummary))
             text.AppendLine($"{(comment.IsAssistant ? "Previous AI response" : "User comment")} {comment.At:O}: {comment.Text}");
         foreach (var file in Files(work))
         {

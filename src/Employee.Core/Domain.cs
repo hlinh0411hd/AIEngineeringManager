@@ -145,7 +145,7 @@ public sealed class WorkItem
     public string CapabilityDisplay => WorkCapabilities.Display(Capability) + (CapabilityHint != null && Tool == null && !IsCoordinator ? " (planner)" : "");
 
     [System.Text.Json.Serialization.JsonIgnore]
-    public string DifficultyDisplay => $"{DifficultyScore} · {RoutingEffort}" + (Difficulty == null ? "" : " (planner)");
+    public string DifficultyDisplay => (ModelRouter.EffectiveDifficulty(this) is var raised && raised > DifficultyScore ? $"{DifficultyScore} → {raised} after {Reworks + Escalations} send-back(s)" : $"{DifficultyScore}") + $" · {RoutingEffort}" + (Difficulty == null ? "" : " (planner)");
     public WorkState State { get; set; } = WorkState.Queued;
     public AccessLevel Access { get; set; } = AccessLevel.TextOnly;
     public string? ProviderId { get; set; }
@@ -204,6 +204,8 @@ public sealed record WorkAttachment(string Name, byte[] Content)
 public sealed record WorkComment(string Text, List<WorkAttachment> Attachments, DateTimeOffset At)
 {
     public bool IsAssistant { get; init; }
+    // A short done / not done / why note written by the manager (not an AI answer); kept out of AI prompts.
+    public bool IsSummary { get; init; }
     public string? SourceWorkId { get; init; }
     public long? ExecutionSequence { get; init; }
 }
@@ -292,6 +294,20 @@ public sealed class ManagerSettings
 
     public static readonly string[] DefaultProviderIds = ["codex", "claude", "copilot", "gemini", "opencode", "freebuff", "commandcode", "qoder", "antigravity", "ollama"];
     public List<ProviderSettings> Providers { get; set; } = [..DefaultProviderIds.Select(id => new ProviderSettings { Id = id })];
+    public TelegramSettings Telegram { get; set; } = new();
+}
+
+// Outbound Telegram notifications. The bot token exists only as a Windows DPAPI (current user) blob
+// produced by Employee.Infrastructure.TelegramSecrets; there is no plaintext property to serialize.
+public sealed class TelegramSettings
+{
+    public bool Enabled { get; set; }
+    public string ProtectedBotToken { get; set; } = "";
+    // 0 = not paired: nothing is sent to anyone.
+    public long AllowedChatId { get; set; }
+    public bool NotifyCompleted { get; set; } = true;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasToken =>ProtectedBotToken.Length > 0;
 }
 
 public sealed record ProviderHealth(string Id, bool Installed, bool CanExecute, bool CanWrite, string Detail, string Authentication = "Unknown", string Usage = "Unknown", DateTimeOffset? CooldownUntil = null)
