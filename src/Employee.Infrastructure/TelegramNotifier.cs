@@ -259,8 +259,24 @@ public sealed class TelegramNotifier
                         using var client = clientFor(token);
                         var id = await client.SendMessageAsync(config.AllowedChatId, Format(notice), null, cancel, keyboard: TelegramCommand.Buttons(notice.State, ShortId(notice.WorkId)));
                         Messages.Record(config.AllowedChatId, id, notice.WorkId);
+                        // A media failure must not retry the already delivered summary or earlier files.
+                        var mediaSent = true;
+                        foreach (var attachment in notice.Attachments.Take(6))
+                        {
+                            try
+                            {
+                                var mediaId = await client.SendMediaAsync(config.AllowedChatId, attachment, id, cancel);
+                                Messages.Record(config.AllowedChatId, mediaId, notice.WorkId);
+                            }
+                            catch (OperationCanceledException) when (cancel.IsCancellationRequested) { return false; }
+                            catch (Exception ex)
+                            {
+                                mediaSent = false;
+                                Report("Telegram result attachment failed: " + TelegramBotClient.Redact(ex.Message, token));
+                            }
+                        }
                         lastPermanentHint = "";
-                        return true;
+                        return mediaSent;
                     }
                     catch (OperationCanceledException) when (cancel.IsCancellationRequested)
                     {

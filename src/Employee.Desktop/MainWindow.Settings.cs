@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using Employee.Core;
+using Employee.Infrastructure;
 
 namespace Employee.Desktop;
 public partial class MainWindow
@@ -51,53 +52,41 @@ public partial class MainWindow
         {
             loadingCliMode = false;
         }
-        RefreshCliToggles();
+        if (CliToolApiUrl != null)
+        {
+            CliToolApiUrl.Text = settings.CliToolApiUrl;
+            CliToolApiToken.Clear();
+            ClearCliToolApiToken.IsChecked = false;
+            RefreshCliToolApiStatus();
+        }
+        RefreshAgentsGrid();
     }
+
+    private async void SaveCliToolApi(object sender, RoutedEventArgs e) => await Guard(() =>
+    {
+        IdleOnly();
+        settings = store.LoadSettings();
+        var url = CliToolApiUrl.Text.Trim();
+        if (!CliToolApiClient.TryParseBaseUrl(url, out _))
+            throw new InvalidOperationException("Enter the aihub address, for example http://127.0.0.1:4777. Plain http is allowed only for this computer; use https otherwise.");
+        settings.CliToolApiUrl = url;
+        if (CliToolApiToken.Password.Length > 0)
+            settings.ProtectedCliToolApiToken = SecretProtection.Protect(CliToolApiToken.Password.Trim());
+        else if (ClearCliToolApiToken.IsChecked == true)
+            settings.ProtectedCliToolApiToken = "";
+        store.SaveSettings(settings);
+        CliToolApiToken.Clear();
+        ClearCliToolApiToken.IsChecked = false;
+        RefreshCliToolApiStatus();
+        Status.Text = "Saved the CLI Tool API connection. Click Detect providers to fetch the agent list and models.";
+        return Task.CompletedTask;
+    });
 
     private static string CliName(string id) => id switch
     {
         "codex" => "Codex (OpenAI)", "claude" => "Claude Code", "copilot" => "Copilot CLI", "gemini" => "Gemini CLI",
-        "opencode" => "OpenCode", "freebuff" => "Freebuff", "commandcode" => "CommandCode", "qoder" => "Qoder", "antigravity" => "Antigravity CLI (agy)", _ => id
+        "opencode" => "OpenCode", "freebuff" => "Freebuff", "commandcode" => "CommandCode", "qoder" => "Qoder", "antigravity" => "Antigravity CLI (agy)", "kilo" => "Kilo Code CLI", "cline" => "Cline CLI", "clixad" => "clixad (ad-funded)", "devin" => "Devin CLI", "custom-cli" => "Custom CLI agent", "responses-api" => "OpenAI-compatible Responses API", _ => id
     };
-
-    // One checkbox per CLI: ticked = tasks may send it requests. Ollama is set up under Local AI.
-    private void RefreshCliToggles()
-    {
-        if (CliToggles == null || settings == null)
-            return;
-        CliToggles.Children.Clear();
-        foreach (var provider in settings.Providers.Where(p => ManagerSettings.IsCli(p.Id)))
-        {
-            var found = health.FirstOrDefault(h => h.Id == provider.Id);
-            var state = found == null ? "not checked yet" : !found.Installed || found.StandaloneCliMissing ? "not installed" : found.CanExecute ? "installed, ready" : "installed, cannot run headless";
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 3) };
-            var box = new CheckBox { Content = CliName(provider.Id), IsChecked = provider.Enabled, MinWidth = 180, VerticalAlignment = VerticalAlignment.Center, Tag = provider.Id };
-            box.Checked += CliToggleChanged;
-            box.Unchecked += CliToggleChanged;
-            row.Children.Add(box);
-            row.Children.Add(new TextBlock { Text = state, Foreground = UiArt.Brush(found?.CanExecute == true ? "#8FD19E" : "#9D94B5"), FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) });
-            CliToggles.Children.Add(row);
-        }
-    }
-
-    // Saved at once. Turning a CLI on also gives it full permissions, like Detect does.
-    private void CliToggleChanged(object sender, RoutedEventArgs e) => _ = Guard(() =>
-    {
-        if (sender is not CheckBox { Tag: string id } box || store == null)
-            return Task.CompletedTask;
-        var on = box.IsChecked == true;
-        settings = store.LoadSettings();
-        var provider = settings.Providers.Single(p => p.Id == id);
-        provider.Enabled = on;
-        provider.TurnedOff = !on;
-        if (on)
-            provider.AllowProjectWrite = id != "ollama";
-        store.SaveSettings(settings);
-        LoadProvider();
-        RefreshRoutes();
-        Status.Text = on ? $"{CliName(id)} is on: tasks may use it." + (health.Any(h => h.Id == id && h.CanExecute) ? "" : " Click Detect so the app checks it first.") : $"{CliName(id)} is off: no requests will be sent to it.";
-        return Task.CompletedTask;
-    });
 
     // The choice is saved by its own handler (it fires even when the tab is never opened), so a
     // task can never run against a CLI the user turned off. Errors are shown, never thrown.
@@ -118,7 +107,7 @@ public partial class MainWindow
 
         RefreshRoutes();
         if (!shellLoading)
-            Status.Text = use ? "AI CLIs allowed. Detect capabilities before using them." : "AI CLIs off: no CLI will be started for tasks, detection, model listing, plan drafts or refinement. Local AI is unchanged.";
+            Status.Text = use ? "External AI providers allowed. Detect capabilities before using them." : "External AI providers off: no CLI or direct API provider will be called. Local AI is unchanged.";
         return Task.CompletedTask;
     });
 

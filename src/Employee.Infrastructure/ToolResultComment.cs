@@ -9,7 +9,6 @@ namespace Employee.Infrastructure;
 public static class ToolResultComment
 {
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
-    private static readonly string[] MediaExtensions = [".mp4", ".webm", ".mov", ".mkv", ".gif", ".wav", ".mp3", ".ogg"];
     public const string FilePrefix = "File: ", FolderPrefix = "Folder: ";
     private const int MaxImages = 6, MaxImageBytes = 4 * 1024 * 1024;
 
@@ -36,10 +35,8 @@ public static class ToolResultComment
         files = files.Distinct(StringComparer.OrdinalIgnoreCase).OrderByDescending(f => string.Equals(f, project, StringComparison.OrdinalIgnoreCase)).ToList();
 
         var text = new StringBuilder();
-        text.AppendLine(stepRequest.Length > 300 ? stepRequest[..297] + "…" : stepRequest);
-        text.AppendLine();
         var status = json["status"]?.ToString();
-        text.AppendLine("Tool result" + (status != null ? ": " + status : "") + ".");
+        text.AppendLine("Kết quả công cụ" + (status != null ? ": " + status : "") + ".");
         if (json["sheetWidth"] != null)
         {
             var columns = json["columns"]?.ToString() ?? "1";
@@ -52,7 +49,8 @@ public static class ToolResultComment
         foreach (var file in files)
         {
             var extension = Path.GetExtension(file).ToLowerInvariant();
-            if (ImageExtensions.Contains(extension) && attachments.Count < MaxImages && File.Exists(file) && new FileInfo(file).Length <= MaxImageBytes)
+            if (TaskResultMedia.IsMedia(file) && attachments.Count < MaxImages && File.Exists(file) && new FileInfo(file).Length <= (ImageExtensions.Contains(extension) ? MaxImageBytes : TaskResultMedia.MaxBytes)
+                && attachments.Sum(a => (long)a.Content.Length) + new FileInfo(file).Length <= TaskResultMedia.MaxBytes)
                 attachments.Add(new WorkAttachment(Path.GetFileName(file), File.ReadAllBytes(file)));
         }
         var shown = files.Take(8).ToList();
@@ -89,7 +87,7 @@ public static class ToolResultComment
                 try
                 {
                     var extension = Path.GetExtension(text).ToLowerInvariant();
-                    if (File.Exists(text) && (ImageExtensions.Contains(extension) || MediaExtensions.Contains(extension) || extension is ".json" or ".zip" or ".srt"))
+                    if (File.Exists(text) && TaskResultMedia.IsMedia(text))
                         files.Add(Path.GetFullPath(text));
                     else if (Directory.Exists(text))
                         files.Add(Path.GetFullPath(text));

@@ -61,7 +61,7 @@ internal sealed class ToolBackendLauncher : IDisposable
     // operation is over: that is what lets an auto-started backend be stopped again.
     public async Task<IDisposable> EnsureAsync(ConnectedTool tool, Func<CancellationToken, Task> probe, Action<string> report, CancellationToken token)
     {
-        if (tool.Connector is "video" or "music")
+        if (tool.Connector is "video" or "aivideo" or "music")
             return NoLease; // Renderer runs per operation through a bridge, without a resident backend.
         var endpoint = Endpoint(tool);
         var key = $"loopback:{endpoint.Port}";

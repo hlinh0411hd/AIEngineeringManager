@@ -101,7 +101,8 @@ public partial class MainWindow
         if (telegram == null || !settings.Telegram.Enabled)
             return;
         // The summary is read here, on the UI thread, where the task store is consistent.
-        var batch = notices.Select(n => n with { Summary = SafeSummary(n.WorkId), LastComment = SafeLastComment(n.WorkId) }).ToArray();
+        var batch = notices.Select(n => n with { Summary = SafeSummary(n.WorkId), LastComment = SafeLastComment(n.WorkId),
+            Attachments = FindTelegramTask(n.WorkId) is { } work ? TaskResultMedia.ForNotice(work) : [] }).ToArray();
         if (batch.Length == 0)
             return;
         var notifier = telegram;

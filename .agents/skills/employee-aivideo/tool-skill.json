@@ -1,0 +1,18 @@
+{
+  "Id": "employee-aivideo",
+  "Description": "Make videos with AIVideoStudio: a new MP4 from a topic, a script or the project's own images and clips with its AI video generator, check its setup, or inspect/export a saved AIVideoStudio project, and pass the video to later tasks.",
+  "Connector": "aivideo",
+  "Operations": [
+    "status",
+    "inspect",
+    "export",
+    "generate"
+  ],
+  "Keywords": [
+    "aivideostudio",
+    "ai video studio",
+    "ai video",
+    "tao video ai",
+    "tool video ai"
+  ]
+}

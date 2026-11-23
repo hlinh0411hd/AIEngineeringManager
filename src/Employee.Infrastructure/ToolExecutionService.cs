@@ -44,6 +44,9 @@ public sealed class ToolExecutionService : IDisposable
         // generate runs TrailerForge's own AI video generator (its script is written by an AI CLI), so it counts as a model call.
         "video" => [new("inspect", "Inspect saved TrailerForge project"), new("export", "Export saved project using TrailerForge renderer", true),
             new("generate", "Make a new MP4 with TrailerForge's AI video generator: from a topic, a script, or the project's own images and clips", true, true)],
+        // AIVideoStudio: status imports its modules; inspect/export use a saved project folder; generate runs its AI video generator (a model call).
+        "aivideo" => [new("status", "Check AIVideoStudio source, Python, Pillow and FFmpeg"), new("inspect", "Inspect saved AIVideoStudio project"), new("export", "Export saved project using AIVideoStudio renderer", true),
+            new("generate", "Make a new MP4 with AIVideoStudio's AI video generator: from a topic, a script, or the project's own images and clips", true, true)],
         // inspect/export use ZapBop's engine directly; sfx/compose/render use ZapBop's own API (API.md).
         // compose runs ZapBop's AI composer on an AI CLI, so it counts as a model call and needs approval.
         "music" => [new("status", "Check ZapBop source and Python engine imports"), new("inspect", "Validate and summarize a saved ZapBop project (.json)"), new("export", "Render a saved ZapBop project to WAV with ZapBop's engine", true),
@@ -199,7 +202,7 @@ public sealed class ToolExecutionService : IDisposable
             }
 
             var input = JsonNode.Parse(text)!.AsObject();
-            JsonNode output = resumePixel ? await Request(tool, HttpMethod.Get, "/api/codex/jobs/" + run.RemoteId, null, cancel.Token) : tool.Connector == "video" ? await Video(tool, run, input, cancel.Token) : tool.Connector == "music" ? await Music(tool, run, input, cancel.Token) : await Api(tool, run, input, cancel.Token);
+            JsonNode output = resumePixel ? await Request(tool, HttpMethod.Get, "/api/codex/jobs/" + run.RemoteId, null, cancel.Token) : tool.Connector == "video" ? await Video(tool, run, input, cancel.Token) : tool.Connector == "aivideo" ? await AiVideo(tool, run, input, cancel.Token) : tool.Connector == "music" ? await Music(tool, run, input, cancel.Token) : await Api(tool, run, input, cancel.Token);
             if (tool.Connector == "pixel" && run.Operation == "generate")
                 output = await AwaitPixel(tool, run, output, input, cancel.Token);
             if (tool.Connector == "marketing" && run.Operation == "content.create")
@@ -257,6 +260,55 @@ public sealed class ToolExecutionService : IDisposable
             store.SaveToolRun(run);
             Changed?.Invoke();
         }
+    }
+
+    private async Task<JsonNode> AiVideo(ConnectedTool tool, ToolRun run, JsonObject input, CancellationToken token)
+    {
+        var python = ProcessRunner.FindExecutable(tool.Executable);
+        if (python == null)
+            throw new InvalidOperationException("Configure an installed native Python executable; no dependencies are installed automatically.");
+        var bridge = Path.Combine(appRoot, "connectors", "aivideostudio_bridge.py");
+        if (!File.Exists(bridge))
+            throw new InvalidOperationException("AIVideoStudio bridge is missing from the application root.");
+        if (run.Operation == "status")
+            return await RunBridge(python, [bridge, "--source", tool.SourcePath, "--operation", "status"], "{}", "AIVideoStudio", result => new InvalidOperationException(result.Output), token);
+        if (run.Operation == "generate")
+        {
+            // The task's own project is the root its media may come from; the video goes to this run's folder.
+            var bound = manager.WorkItems().FirstOrDefault(w => w.ToolRunId == run.Id && !w.IsGoal);
+            var projectRoot = bound == null ? null : manager.Projects().FirstOrDefault(p => p.Id == bound.ProjectId)?.Root;
+            var root = projectRoot != null && Directory.Exists(projectRoot) ? projectRoot : tool.WorkspaceRoot;
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+                throw new InvalidOperationException("The task's project folder (or the tool's workspace) is needed as the root for video media.");
+            var runFolder = Path.Combine(dataRoot, "artifacts", "tool-runs", run.Id);
+            Directory.CreateDirectory(runFolder);
+            var made = await RunBridge(python, [bridge, "--source", tool.SourcePath, "--root", root, "--operation", "generate", "--output-dir", runFolder], input.ToJsonString(), "AIVideoStudio", result => new InvalidOperationException("AIVideoStudio: " + (result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).LastOrDefault() ?? "exit code " + result.ExitCode)), token);
+            await CheckVideo(made, runFolder, token, "AIVideoStudio");
+            return made;
+        }
+        if (string.IsNullOrWhiteSpace(tool.WorkspaceRoot) || !Directory.Exists(tool.WorkspaceRoot))
+            throw new InvalidOperationException("Choose the allowed video-project workspace root.");
+        var output = await RunBridge(python, [bridge, "--source", tool.SourcePath, "--root", tool.WorkspaceRoot, "--operation", run.Operation], input.ToJsonString(), "AIVideoStudio", result => new InvalidOperationException(result.Output), token);
+        if (run.Operation != "export")
+            return output;
+        // The renderer writes inside the saved project folder; confirm a real MP4 is there, inside the approved workspace, before review.
+        var artifact = Text(output["artifactPath"]) ?? throw new InvalidOperationException("AIVideoStudio export returned no artifactPath.");
+        var full = Path.GetFullPath(artifact);
+        if (!full.StartsWith(Path.GetFullPath(tool.WorkspaceRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !File.Exists(full))
+            throw new InvalidOperationException("AIVideoStudio export did not produce a file inside the approved workspace.");
+        await using (var video = File.OpenRead(full))
+        {
+            var header = new byte[12];
+            if (video.Length < 12 || await video.ReadAtLeastAsync(header, 12, false, token) < 12)
+                throw new InvalidOperationException("AIVideoStudio export is empty or truncated.");
+            if (full.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) && !header.AsSpan(4, 4).SequenceEqual("ftyp"u8))
+                throw new InvalidOperationException("AIVideoStudio export is not a valid MP4 file.");
+            video.Position = 0;
+            output["artifactSha256"] = Convert.ToHexString(await SHA256.HashDataAsync(video, token));
+            output["artifactBytes"] = video.Length;
+        }
+        output["artifactPath"] = full;
+        return output;
     }
 
     private async Task<JsonNode> Video(ConnectedTool tool, ToolRun run, JsonObject input, CancellationToken token)
@@ -438,16 +490,16 @@ public sealed class ToolExecutionService : IDisposable
     }
 
     // The generated video must be a real MP4 inside this run's folder.
-    internal static async Task CheckVideo(JsonNode output, string runFolder, CancellationToken token)
+    internal static async Task CheckVideo(JsonNode output, string runFolder, CancellationToken token, string toolName = "TrailerForge")
     {
-        var artifact = Text(output["artifactPath"]) ?? throw new InvalidOperationException("TrailerForge returned no video file.");
+        var artifact = Text(output["artifactPath"]) ?? throw new InvalidOperationException(toolName + " returned no video file.");
         var full = Path.GetFullPath(artifact);
         if (!full.StartsWith(Path.GetFullPath(runFolder) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !full.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) || !File.Exists(full))
-            throw new InvalidOperationException("TrailerForge did not write an MP4 in the run folder: " + artifact);
+            throw new InvalidOperationException(toolName + " did not write an MP4 in the run folder: " + artifact);
         await using var video = File.OpenRead(full);
         var header = new byte[12];
         if (video.Length < 1024 || await video.ReadAtLeastAsync(header, 12, false, token) < 12 || !header.AsSpan(4, 4).SequenceEqual("ftyp"u8))
-            throw new InvalidOperationException("TrailerForge output is not a valid MP4 file.");
+            throw new InvalidOperationException(toolName + " output is not a valid MP4 file.");
         video.Position = 0;
         output["artifactPath"] = full;
         output["artifactSha256"] = Convert.ToHexString(await SHA256.HashDataAsync(video, token));
@@ -733,6 +785,20 @@ public sealed class ToolExecutionService : IDisposable
             timeout.CancelAfter(TimeSpan.FromSeconds(8));
             if (tool.Connector == "video")
                 tool.Status = File.Exists(Path.Combine(tool.SourcePath, "editor_core.py")) && ProcessRunner.FindExecutable(tool.Executable) != null ? "Source/Python located; export dependencies not exercised" : "Configure TrailerForge source and Python executable";
+            else if (tool.Connector == "aivideo")
+            {
+                // Static source/Python check first; then the bridge imports Pillow/FFmpeg without starting a job.
+                if (!File.Exists(Path.Combine(tool.SourcePath, "editor_core.py")) || ProcessRunner.FindExecutable(tool.Executable) == null)
+                    tool.Status = "Configure AIVideoStudio source and Python executable";
+                else
+                {
+                    timeout.CancelAfter(TimeSpan.FromSeconds(30));
+                    var value = await AiVideo(tool, new ToolRun { Operation = "status" }, new JsonObject(), timeout.Token);
+                    var missing = (value["missing"] as JsonArray)?.Select(Text).OfType<string>().ToList() ?? [];
+                    tool.Status = missing.Count > 0 ? "Missing: " + string.Join(", ", missing) : "Python + Pillow + FFmpeg OK; MP4 render not exercised";
+                    tool.Version = "AIVideoStudio " + (Text(value["version"]) ?? "?");
+                }
+            }
             else if (tool.Connector == "music")
             {
                 // Imports ZapBop's engine in its own Python; no project is read, no audio device opened.

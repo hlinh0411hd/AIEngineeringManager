@@ -93,6 +93,25 @@ internal static class AttachmentPreview
             return tile;
         }
 
+        if (Employee.Infrastructure.TaskResultMedia.IsMedia(file.Name))
+        {
+            var kind = Path.GetExtension(file.Name).ToLowerInvariant() is ".mp4" or ".webm" or ".mov" or ".mkv" ? "video" : "file";
+            var video = new Button { Content = "Open " + kind + ": " + file.Name, Margin = new Thickness(0, 4, 8, 4) };
+            video.Click += (_, _) =>
+            {
+                try
+                {
+                    var folder = Path.Combine(Path.GetTempPath(), "EmployeeResultMedia", Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(folder);
+                    var path = Path.Combine(folder, Path.GetFileName(file.Name));
+                    File.WriteAllBytes(path, file.Content);
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+                { MessageBox.Show("Cannot open file: " + ex.Message); }
+            };
+            return video;
+        }
         return new TextBlock
         {
             Text = file.Label,

@@ -176,7 +176,7 @@ public sealed class UnifiedTaskService
             throw new InvalidOperationException("Enter a change request or attach a file.");
         if (text.Length > 12000)
             throw new InvalidOperationException("Comments are limited to 12,000 characters.");
-        TaskAttachments.Validate(TaskAttachments.Files(goal).Concat(files));
+        TaskAttachments.Validate(TaskAttachments.InputFiles(goal).Concat(files));
         goal.Comments.Add(new(text, files, DateTimeOffset.UtcNow));
         // "ok" / "được rồi" while a milestone waits for sign-off approves it: the next milestone starts and
         // nothing is replanned from the comment.
@@ -1528,7 +1528,7 @@ public sealed class UnifiedTaskService
     {
         if (goal.State is WorkState.Running or WorkState.Queued or WorkState.Saved or WorkState.Delegated or WorkState.Skipped)
             return false;
-        var body = TaskSummary.Build(goal, Steps(goal), SessionFor(goal), store.Logs(goal.Id));
+        var body = TaskSummary.Build(goal, Steps(goal), SessionFor(goal), store.Logs(goal.Id), true);
         var text = TaskSummary.Heading + " · " + TaskOutcomes.Label(goal.State) + "\n" + body;
         static string Stable(string t) => string.Join("\n", t.Split('\n').Where(l => !l.StartsWith("Why it stopped:", StringComparison.Ordinal) && !l.StartsWith("Tests:", StringComparison.Ordinal)));
         if (goal.Comments.LastOrDefault(c => c.IsSummary) is { } last && Stable(last.Text) == Stable(text))
@@ -1571,9 +1571,9 @@ public sealed class UnifiedTaskService
             var output = (execution.Event == "ToolResult" ? execution.Message : TaskReviewReport.ReadableOutput(execution.Message[(execution.Message.IndexOf('\n') + 1)..])).Trim();
             if (output.Length == 0)
                 continue;
-            var heading = sources.Length > 1 ? work.Request + "\n\n" : "";
-            var text = heading + output + "\n\nStatus: " + work.State + " · Tests: " + work.Verification;
-            goal.Comments.Add(new(text, [], execution.At) { IsAssistant = true, SourceWorkId = work.Id, ExecutionSequence = execution.Sequence });
+            var text = output + "\n\nStatus: " + work.State + " · Tests: " + work.Verification;
+            var root = store.Projects().FirstOrDefault(p => p.Id == goal.ProjectId)?.Root ?? "";
+            goal.Comments.Add(new(text, TaskResultMedia.FromOutput(output, root), execution.At) { IsAssistant = true, SourceWorkId = work.Id, ExecutionSequence = execution.Sequence });
             changed = true;
         }
 

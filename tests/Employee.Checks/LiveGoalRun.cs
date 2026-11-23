@@ -76,7 +76,12 @@ static class LiveGoalRun
 
         var runner = new ProcessRunner();
         using var ollama = new OllamaProvider();
-        IAIProvider[] providers = [.. ManagerSettings.DefaultProviderIds.Where(id => id != "ollama").Select(id => (IAIProvider)new CliProvider(id, runner)), ollama];
+        IAIProvider[] providers = [.. ManagerSettings.DefaultProviderIds.Where(id => id != "ollama").Select(id => id switch
+        {
+            "custom-cli" => (IAIProvider)new ExternalCliProvider(runner),
+            "responses-api" => new ResponsesApiProvider(),
+            _ => new CliProvider(id, runner)
+        }), ollama];
         var orchestrator = new Orchestrator(store, providers, runner);
         var pool = new TaskExecutionPool(store, store, orchestrator, runner);
         var appRoot = FindAppRoot();

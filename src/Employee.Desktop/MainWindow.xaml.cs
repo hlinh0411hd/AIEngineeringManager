@@ -16,9 +16,14 @@ public partial class MainWindow : Window
     private readonly ProjectIndexer indexer;
     private readonly Orchestrator orchestrator;
     private readonly OllamaProvider ollama = new();
-    private readonly IReadOnlyList<IAIProvider> providers;
+    private readonly ProcessRunner runner;
+    private readonly List<IAIProvider> providerInstances = [];
+    // Instances live in this list; the orchestrator keeps the same reference, so agents added by
+    // the CLI Tool API later in the session become executable without rebuilding the window.
+    private IReadOnlyList<IAIProvider> providers => providerInstances;
     private ManagerSettings settings;
     private IReadOnlyList<ProviderHealth> health = [];
+    private string cliToolApiStatus = "";
     private bool detecting;
     private bool loading;
     private bool closing;
@@ -54,19 +59,8 @@ public partial class MainWindow : Window
         store.RunMaintenance();
         settings = store.LoadSettings();
         indexer = new(store);
-        var runner = new ProcessRunner();
-        providers = [..new[]
-        {
-            "codex",
-            "claude",
-            "copilot",
-            "gemini",
-            "opencode",
-            "freebuff",
-            "commandcode",
-            "qoder",
-            "antigravity"
-        }.Select(id => (IAIProvider)new CliProvider(id, runner)), ollama];
+        runner = new ProcessRunner();
+        RebuildProviders();
         orchestrator = new(store, providers, runner);
         unified = new(store, store, orchestrator, runner);
         unified.WrapLegacySessions();
@@ -112,7 +106,7 @@ public partial class MainWindow : Window
         MaxAttempts.Text = settings.UnlimitedAttempts ? "20" : settings.MaxAttempts.ToString();
         MaxAttempts.IsEnabled = !settings.UnlimitedAttempts;
         TimeoutSeconds.Text = settings.TimeoutSeconds.ToString();
-        ProviderChoice.ItemsSource = settings.Providers.Select(p => p.Id).ToArray();
+        RefreshProviderChoices();
         ProviderChoice.SelectedIndex = 0;
         DataLocation.Text = Path.Combine(dataPath, "manager.db");
         ChangeDataButton.IsEnabled = Application.Current is App app && !app.HasDataOverride;
@@ -173,20 +167,20 @@ public partial class MainWindow : Window
         {
         }, DispatcherPriority.ApplicationIdle);
         if (UseCliChoice.IsChecked != settings.UseAiCli || NoCliChoice.IsChecked == settings.UseAiCli)
-            throw new InvalidOperationException("UI acceptance: AI CLI choice does not show the saved setting.");
+            throw new InvalidOperationException("UI acceptance: external AI provider choice does not show the saved setting.");
         // Radio check changes are raised on the dispatcher, like a real click.
         await Dispatcher.InvokeAsync(() => NoCliChoice.IsChecked = true, DispatcherPriority.Normal);
         await Dispatcher.InvokeAsync(() =>
         {
         }, DispatcherPriority.ApplicationIdle);
         if (settings.UseAiCli || store.LoadSettings().UseAiCli || UseCliChoice.IsChecked != false)
-            throw new InvalidOperationException("UI acceptance: 'Do not use AI CLIs' was not saved.");
+            throw new InvalidOperationException("UI acceptance: 'Do not use external AI providers' was not saved.");
         await Dispatcher.InvokeAsync(() => UseCliChoice.IsChecked = true, DispatcherPriority.Normal);
         await Dispatcher.InvokeAsync(() =>
         {
         }, DispatcherPriority.ApplicationIdle);
         if (!settings.UseAiCli || !store.LoadSettings().UseAiCli || NoCliChoice.IsChecked != false)
-            throw new InvalidOperationException("UI acceptance: 'Use AI CLIs' was not saved.");
+            throw new InvalidOperationException("UI acceptance: 'Use external AI providers' was not saved.");
         UpdateLayout();
         var visual = (FrameworkElement)Content;
         var bitmap = new RenderTargetBitmap((int)visual.ActualWidth, (int)visual.ActualHeight, 96, 96, PixelFormats.Pbgra32);
@@ -223,11 +217,13 @@ public partial class MainWindow : Window
                 ProjectAliases.Text = "Garden";
                 AddProject(this, new());
                 indexer.Index(store.Projects().Single());
-                TaskProject.SelectedItem = store.Projects().Single();
+                var sampleProject = store.Projects().Single();
+                TaskProject.SelectedItem = TaskProject.Items.OfType<ProjectInfo>().First(p => p.Id == sampleProject.Id);
                 TaskRequest.Text = "Review the weekly quest implementation";
                 CreateTask(this, new());
                 ProviderChoice.SelectedItem = "codex";
                 ProviderEnabled.IsChecked = true;
+                ProviderWrite.IsChecked = true;
                 SaveProvider(this, new());
                 NewModel.Text = "";
                 ModelKind.SelectedItem = WorkKind.Coding;
@@ -636,68 +632,108 @@ public partial class MainWindow : Window
     {
         IdleOnly();
         if (!settings.UseAiCli)
-            throw new InvalidOperationException("AI CLIs are turned off in Settings > AI & Models. Turn them on first; no CLI was called. Local AI can still be enabled under Local AI.");
+            throw new InvalidOperationException("External AI providers are turned off in Settings > AI & Models. Turn them on first; no remote provider was called. Local AI can still be enabled under Local AI.");
         detecting = true;
-        Status.Text = "Inspecting installed CLI help and local model list; no AI generation…";
+        Status.Text = "Asking the CLI Tool API for installed agents and their models; no AI inference…";
         try
         {
-            health = await orchestrator.DetectAsync(settings);
-            HealthGrid.ItemsSource = health;
-            foreach (var p in providers)
+            using var client = new CliToolApiClient();
+            var discovery = new CliToolProviderDiscovery(providerInstances, client);
+            var result = await discovery.DiscoverAsync(settings, CancellationToken.None);
+            cliToolApiStatus = result.Detail;
+            RefreshCliToolApiStatus();
+            if (!result.Reachable)
             {
-                if (!health.Any(h => h.Id == p.Id && h.Installed))
-                    continue;
-                var config = settings.Providers.Single(c => c.Id == p.Id);
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                try
-                {
-                    var models = await p.ListModelsAsync(timeout.Token);
-                    ModelCatalogMerge.Apply(config, models);
-                    config.ModelDiscoveryStatus = (p as IModelCatalogStatus)?.ModelDiscoveryDetail ?? $"{models.Count} installed local models from runtime metadata.";
-                }
-                catch (Exception error)
-                {
-                    config.ModelDiscoveryStatus = "Model listing failed: " + error.Message;
-                    config.ModelCatalogCheckedAt = DateTimeOffset.UtcNow;
-                }
-
-                health = health.Select(h => h.Id == p.Id ? h with { Detail = h.Detail + " Models: " + config.ModelDiscoveryStatus } : h).ToArray();
-            }
-
-            // Every CLI found on this PC (and not switched off by the user) is turned on with full permissions (Ollama only answers, it
-            // never edits project files), then checked again now that it is enabled.
-            var added = new List<string>();
-            foreach (var config in settings.Providers)
-            {
-                if (config.TurnedOff || !health.Any(h => h.Id == config.Id && h.Installed && !h.StandaloneCliMissing))
-                    continue;
-                var write = config.Id != "ollama";
-                if (config.Enabled && config.AllowProjectWrite == write)
-                    continue;
-                config.Enabled = true;
-                config.AllowProjectWrite = write;
-                added.Add(config.Id);
-            }
-            if (added.Count > 0)
-            {
+                health = result.Health;
+                HealthGrid.ItemsSource = health;
                 store.SaveSettings(settings);
-                health = await orchestrator.DetectAsync(settings);
+                LoadProvider();
+                RefreshAgentsGrid();
+                Status.Text = result.Detail;
+                return;
             }
+
+            // The API's agent list is authoritative: rebuild one execution instance per configured
+            // agent, then enable exactly the ones that can run. Nothing here scans a CLI itself.
+            var known = providerInstances.Select(p => p.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            RebuildProviders();
+            // A newly installed known agent had no execution instance during the first pass.
+            if (providerInstances.Any(p => !known.Contains(p.Id) && CliProvider.HasExecutionProfile(p.Id)))
+            {
+                result = await discovery.DiscoverAsync(settings, CancellationToken.None);
+                cliToolApiStatus = result.Detail;
+                RefreshCliToolApiStatus();
+            }
+            health = result.Health;
             HealthGrid.ItemsSource = health;
+            CliToolProviderDiscovery.EnableUsable(settings, health);
+            store.SaveSettings(settings);
             var assigned = ModelCatalogMerge.AssignAutomaticRoles(settings, health, store);
             store.SaveSettings(settings);
+            RefreshProviderChoices();
             LoadProvider();
             RefreshRoutes();
-            RefreshCliToggles();
+            RefreshAgentsGrid();
             var enabled = settings.Providers.Where(p => p.Enabled).Select(p => p.Id).ToArray();
             Status.Text = enabled.Length == 0
-                ? "Detection complete. No AI CLI was found. Install one (for example Claude Code or Codex), then click Detect again."
-                : $"Detection complete. Ready to use: {string.Join(", ", enabled)}" + (added.Count > 0 ? $" (just added: {string.Join(", ", added)})" : "") + $". Assigned {assigned} primary roles.";
+                ? "Detection complete. " + result.Detail + " No provider is ready to run; turn one on or configure its executable."
+                : "Detection complete. " + result.Detail + " Enabled: " + string.Join(", ", enabled) + $". Assigned {assigned} primary roles.";
         }
         finally
         {
             detecting = false;
         }
+    }
+
+    private void RebuildProviders()
+    {
+        var wanted = settings.Providers.Select(p => p.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        for (var i = providerInstances.Count - 1; i >= 0; i--)
+        {
+            var instance = providerInstances[i];
+            if (instance.Id is "ollama" or "custom-cli" or "responses-api" || wanted.Contains(instance.Id))
+                continue;
+            providerInstances.RemoveAt(i);
+            if (!ReferenceEquals(instance, ollama) && instance is IDisposable disposable)
+                disposable.Dispose();
+        }
+
+        foreach (var id in settings.Providers.Select(p => p.Id))
+        {
+            if (providerInstances.Any(p => p.Id.Equals(id, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            IAIProvider? created = id switch
+            {
+                "ollama" => ollama,
+                "custom-cli" => new ExternalCliProvider(runner),
+                "responses-api" => new ResponsesApiProvider(),
+                _ when CliProvider.HasExecutionProfile(id) || CliProvider.IsDetectedOnly(id) => new CliProvider(id, runner),
+                _ => null
+            };
+            if (created != null)
+                providerInstances.Add(created);
+        }
+    }
+
+    private void RefreshProviderChoices()
+    {
+        if (ProviderChoice == null || settings == null)
+            return;
+        var selected = ProviderChoice.SelectedItem as string;
+        var ids = settings.Providers.Select(p => p.Id).ToArray();
+        if (ProviderChoice.ItemsSource is string[] current && current.SequenceEqual(ids))
+            return;
+        ProviderChoice.ItemsSource = ids;
+        ProviderChoice.SelectedItem = selected != null && ids.Contains(selected) ? selected : ids.FirstOrDefault();
+    }
+
+    private void RefreshCliToolApiStatus()
+    {
+        if (CliToolApiStatus == null || settings == null)
+            return;
+        var token = settings.ProtectedCliToolApiToken.Length > 0 ? "API token saved." : "No API token (loopback API is open by default).";
+        CliToolApiStatus.Text = "Detected agents and models come from the CLI Tool API; this app no longer scans CLIs itself. " + token
+            + (cliToolApiStatus.Length > 0 ? " " + cliToolApiStatus : "");
     }
 
     private async void DetectProviders(object sender, RoutedEventArgs e) => await Guard(Detect);
@@ -708,11 +744,29 @@ public partial class MainWindow : Window
             return;
         loading = true;
         var p = settings.Providers.Single(p => p.Id == id);
-        ProviderExe.Text = p.Executable;
+        // Agents the CLI Tool API lists but this manager cannot execute headlessly keep a visible row
+        // (so the GUI matches the API), yet offer no misleading executable field.
+        var noAdapter = ManagerSettings.IsCli(id) && id is not ("custom-cli" or "responses-api") && !CliProvider.HasExecutionProfile(id) && !CliProvider.IsDetectedOnly(id);
+        ProviderExeLabel.Text = noAdapter ? "Detected by CLI Tool API · no execution adapter in this manager" : id == "responses-api" ? "Base URL" : "Executable path (empty = PATH)";
+        ProviderExe.Text = id == "responses-api" ? p.ResponsesApiBaseUrl : noAdapter ? "" : p.Executable;
+        ProviderExe.IsEnabled = !noAdapter;
         ProviderPriority.Text = p.Priority.ToString();
         ProviderEnabled.IsChecked = p.Enabled;
         ProviderWrite.IsChecked = p.AllowProjectWrite;
-        ProviderWrite.IsEnabled = id != "ollama";
+        ProviderWrite.IsEnabled = id is not ("ollama" or "custom-cli");
+        ProviderWrite.Content = id == "responses-api"
+            ? "Allow project edits (reviewed proposals; API cannot access files directly)"
+            : "Allow project writes (sandbox / reviewed proposals)";
+        CustomCliSettingsPanel.Visibility = id == "custom-cli" ? Visibility.Visible : Visibility.Collapsed;
+        ResponsesApiSettingsPanel.Visibility = id == "responses-api" ? Visibility.Visible : Visibility.Collapsed;
+        ProviderArguments.Text = JsonSerializer.Serialize(p.ExternalArguments);
+        ProviderApiKeyVariable.Text = p.ExternalApiKeyEnvironmentVariable;
+        ProviderApiKey.Clear();
+        ClearProviderApiKey.IsChecked = false;
+        ProviderApiKeyStatus.Text = p.ProtectedExternalApiKey.Length == 0 ? "No saved API key." : "API key saved and protected for this Windows account. Leave blank to keep it.";
+        ResponsesApiKey.Clear();
+        ClearResponsesApiKey.IsChecked = false;
+        ResponsesApiKeyStatus.Text = p.ProtectedResponsesApiKey.Length == 0 ? "No saved API key." : "API key saved and protected for this Windows account. Leave blank to keep it.";
         ModelGrid.ItemsSource = p.Models.ToArray();
         ModelDiscoveryNote.Text = p.ModelDiscoveryStatus + (p.ModelCatalogCheckedAt is { } at ? " | " + at.ToLocalTime().ToString("g") : "");
         loading = false;
@@ -724,16 +778,43 @@ public partial class MainWindow : Window
         if (loading)
             return Task.CompletedTask;
         var p = settings.Providers.Single(p => p.Id == (string)ProviderChoice.SelectedItem);
-        p.Executable = ProviderExe.Text.Trim();
+        if (p.Id == "responses-api")
+        {
+            p.ResponsesApiBaseUrl = ProviderExe.Text.Trim();
+            ResponsesApiProvider.ParseBaseUrl(p.ResponsesApiBaseUrl);
+            if (ResponsesApiKey.Password.Length > 0)
+                p.ProtectedResponsesApiKey = SecretProtection.Protect(ResponsesApiKey.Password.Trim());
+            else if (ClearResponsesApiKey.IsChecked == true)
+                p.ProtectedResponsesApiKey = "";
+        }
+        else
+            p.Executable = ProviderExe.Text.Trim();
+        if (p.Id == "custom-cli")
+        {
+            p.ExternalArguments = JsonSerializer.Deserialize<string[]>(ProviderArguments.Text)
+                ?? throw new InvalidOperationException("Custom CLI arguments must be a JSON string array.");
+            ExternalCliProvider.ValidateArguments(p.ExternalArguments);
+            p.ExternalApiKeyEnvironmentVariable = ProviderApiKeyVariable.Text.Trim();
+            if (!ExternalCliProvider.IsSupportedApiKeyVariable(p.ExternalApiKeyEnvironmentVariable))
+                throw new InvalidOperationException("Choose a supported API-key environment variable.");
+            if (ProviderApiKey.Password.Length > 0)
+                p.ProtectedExternalApiKey = SecretProtection.Protect(ProviderApiKey.Password);
+            else if (ClearProviderApiKey.IsChecked == true)
+                p.ProtectedExternalApiKey = "";
+        }
         p.Priority = Number(ProviderPriority.Text, 0, 100);
         p.Enabled = ProviderEnabled.IsChecked == true;
         p.TurnedOff = !p.Enabled;
-        p.AllowProjectWrite = p.Id != "ollama" && ProviderWrite.IsChecked == true;
+        p.AllowProjectWrite = p.Id is not ("ollama" or "custom-cli" or "clixad") && ProviderWrite.IsChecked == true;
         store.SaveSettings(settings);
+        if (p.Id == "custom-cli")
+            ProviderApiKeyStatus.Text = p.ProtectedExternalApiKey.Length == 0 ? "No saved API key." : "API key saved and protected for this Windows account. Leave blank to keep it.";
+        if (p.Id == "responses-api")
+            ResponsesApiKeyStatus.Text = p.ProtectedResponsesApiKey.Length == 0 ? "No saved API key." : "API key saved and protected for this Windows account. Leave blank to keep it.";
         health = [];
         HealthGrid.ItemsSource = health;
         RefreshRoutes();
-        RefreshCliToggles();
+        RefreshAgentsGrid();
         Status.Text = "Provider permission saved. Detect capabilities again before running.";
         return Task.CompletedTask;
     });
@@ -1114,7 +1195,8 @@ public partial class MainWindow : Window
         taskRetentionTimer.Stop();
         outputTimer.Stop();
         controlCenter?.Dispose();
-        ollama.Dispose();
+        foreach (var provider in providers.OfType<IDisposable>())
+            provider.Dispose();
         store.Dispose();
     }
 }

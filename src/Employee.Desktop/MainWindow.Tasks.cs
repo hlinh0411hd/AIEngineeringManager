@@ -745,9 +745,10 @@ public partial class MainWindow
         TaskAccess.SelectedItem = AccessLevel.ReadProject;
         if (Tabs.Items.Count < 6 || Tabs.Items.Cast<System.Windows.Controls.TabItem>().Any(t => t.Header?.ToString()?.Contains("V2") == true))
             throw new InvalidOperationException("Standalone V2 tab must not be shown.");
+        ShowTaskCreate(this, new());
         TaskRequest.Text = "Fixture: multiple steps in Tasks";
         var goal = CreateTaskRecord();
-        if (goal.AutoAssign || goal.Kind != WorkKind.Review || goal.Access != AccessLevel.ReadProject)
+        if (goal.AutoAssign || goal.Kind != WorkKind.Review || goal.Access != AccessLevel.WriteProject)
             throw new InvalidOperationException("Manual choices were not saved with the task.");
         TaskKind.SelectedItem = WorkKind.Coding;
         if (TaskCreateView.Visibility != Visibility.Visible || TaskListView.Visibility != Visibility.Collapsed || SelectedWork().Id != goal.Id)

@@ -38,7 +38,13 @@ public sealed class ProcessRunner : IProcessRunner
             "GEMINI_API_KEY",
             "GOOGLE_API_KEY",
             "OPENROUTER_API_KEY",
-            "AZURE_OPENAI_API_KEY"
+            "AZURE_OPENAI_API_KEY",
+            "DEEPSEEK_API_KEY",
+            "MISTRAL_API_KEY",
+            "XAI_API_KEY",
+            "GROQ_API_KEY",
+            "TOGETHER_API_KEY",
+            "FIREWORKS_API_KEY"
         }
 
         )
@@ -185,6 +191,14 @@ public sealed class ProcessRunner : IProcessRunner
             }
         }
 
+        // The Devin CLI installer keeps its binary outside PATH.
+        if (providerId == "devin" && (name.Equals("devin", StringComparison.OrdinalIgnoreCase) || name.Equals("devin.exe", StringComparison.OrdinalIgnoreCase)))
+        {
+            var installed = Path.Combine(search.LocalAppData, "devin", "cli", "bin", "devin.exe");
+            if (File.Exists(installed))
+                return new(installed, []);
+        }
+
         // Recognize only standard installed npm launchers and invoke the package EXE or Node directly, never cmd.exe.
         var candidates = Path.IsPathFullyQualified(name) ? new[]
         {
@@ -200,6 +214,9 @@ public sealed class ProcessRunner : IProcessRunner
             "copilot" => "@github/copilot/",
             "freebuff" => "freebuff/",
             "commandcode" => "command-code/",
+            "kilo" => "@kilocode/cli/",
+            "cline" => "cline/",
+            "clixad" => "clixad/",
             _ => ""
         };
         if (package.Length == 0)
@@ -211,11 +228,15 @@ public sealed class ProcessRunner : IProcessRunner
             var info = new FileInfo(shim);
             if (info.Length > 16000 || (info.Attributes & FileAttributes.ReparsePoint) != 0)
                 continue;
-            var match = System.Text.RegularExpressions.Regex.Match(File.ReadAllText(shim), "(?<path>node_modules[\\\\/][^\"\\r\\n]+?\\.(?:exe|js|cjs|mjs))");
+            var match = System.Text.RegularExpressions.Regex.Match(File.ReadAllText(shim), "(?<path>node_modules[\\\\/][^\"\\r\\n]+)");
             if (!match.Success)
                 continue;
             var relative = match.Groups["path"].Value.Replace('\\', '/');
             if (!relative.StartsWith("node_modules/" + package, StringComparison.OrdinalIgnoreCase) || relative.Contains(".."))
+                continue;
+            // Kilo and Cline ship extensionless Node entry scripts, not a .js/.mjs file.
+            var extension = Path.GetExtension(relative).ToLowerInvariant();
+            if (extension.Length == 0 ? providerId is not ("kilo" or "cline") : extension is not (".exe" or ".js" or ".cjs" or ".mjs"))
                 continue;
             var folder = Path.GetDirectoryName(Path.GetFullPath(shim))!;
             var script = Path.GetFullPath(Path.Combine(folder, relative));
@@ -348,6 +369,10 @@ public static class ProviderErrors
             "rate_limit_exceeded",
             "usage_limit_reached",
             "insufficient credits",
+            "insufficient balance",
+            "out of credits",
+            "not enough credits",
+            "not enough premium credits",
             "quota has been exceeded",
             "exhausted your premium request",
             "premium request allowance exhausted"

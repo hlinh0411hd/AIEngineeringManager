@@ -60,9 +60,10 @@ public partial class App : Application
             if (e.Args.Contains("--configure-providers"))
             {
                 using var store = new SqliteStore(Path.Combine(data, "manager.db"));
-                if (!store.LoadSettings().UseAiCli)
+                var settings = store.LoadSettings();
+                if (!settings.UseAiCli)
                 {
-                    File.WriteAllText(Path.Combine(data, "provider-setup-report.json"), "AI CLIs are turned off in Settings > AI & Models; no CLI was called.");
+                    File.WriteAllText(Path.Combine(data, "provider-setup-report.json"), "External AI providers are turned off in Settings > AI & Models; no remote provider was called.");
                     Shutdown();
                     return;
                 }
@@ -71,19 +72,25 @@ public partial class App : Application
                 using var ollama = new OllamaProvider();
                 var providers = new List<Employee.Core.IAIProvider>
                 {
-                    new CliProvider("codex", runner),
-                    new CliProvider("claude", runner),
-                    new CliProvider("copilot", runner),
-                    new CliProvider("gemini", runner),
-                    new CliProvider("opencode", runner),
-                    new CliProvider("freebuff", runner),
-                    new CliProvider("commandcode", runner),
-                    new CliProvider("qoder", runner),
-                    new CliProvider("antigravity", runner),
+                    new ExternalCliProvider(runner),
+                    new ResponsesApiProvider(),
                     ollama
                 };
-                var result = await new ProviderSetupService(store, providers).EnableAvailableAsync();
-                File.WriteAllText(Path.Combine(data, "provider-setup-report.json"), System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+                foreach (var id in settings.Providers.Select(p => p.Id))
+                    if (CliProvider.HasExecutionProfile(id) || CliProvider.IsDetectedOnly(id))
+                        providers.Add(new CliProvider(id, runner));
+                using var client = new CliToolApiClient();
+                var discovery = await new CliToolProviderDiscovery(providers, client).DiscoverAsync(settings, CancellationToken.None);
+                IReadOnlyList<ProviderSetupResult> report = discovery.Reachable ? CliToolProviderDiscovery.EnableUsable(settings, discovery.Health) : [];
+                store.SaveSettings(settings);
+                File.WriteAllText(Path.Combine(data, "provider-setup-report.json"), System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    discovery.Detail,
+                    discovery.Total,
+                    discovery.Installed,
+                    discovery.Usable,
+                    Providers = report
+                }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
                 Shutdown();
                 return;
             }

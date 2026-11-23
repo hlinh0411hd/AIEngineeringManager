@@ -54,7 +54,7 @@ public static class TaskSummary
         if (goal.Verification != VerificationState.Untested)
             lines.Add("Tests: " + goal.Verification);
         if (includeLastResult && goal.Comments.LastOrDefault(c => c.IsAssistant && !c.IsSummary) is { } last)
-            lines.Add("AI result: " + Clip(OneLine(StripStatus(last.Text)), 250));
+            lines.Add("AI result: " + Clip(OneLine(StripStatus(last.Text)), 800));
         return string.Join("\n", lines);
     }
 

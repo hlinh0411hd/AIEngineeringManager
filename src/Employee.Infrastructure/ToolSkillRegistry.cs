@@ -105,6 +105,10 @@ public sealed class ToolSkillRegistry
                     "tool dựng trailer", "tool render trailer", "tool xuất video", "tool render video",
                     "video editor tool", "video editing tool", "video editor", "video maker", "video app", "app video", "tool làm video", "tool trailer", "trailer tool", "công cụ trailer", "trailer editor", "trailer maker"
                 ],
+                "aivideo" =>
+                [
+                    "AIVideoStudio", "AI Video Studio", "aivideostudio", "ai video tool", "tool ai video", "tool tạo video ai", "ai video generator", "app tạo video ai", "ai video maker"
+                ],
                 "music" =>
                 [
                     "ZapBop", "Zap Bop", "ZapBop Music Producer", "Music Producer", "music producer tool", "music tool", "tool music", "tool nhạc", "công cụ nhạc",
@@ -289,6 +293,15 @@ public sealed class ToolSkillRegistry
                         throw new InvalidOperationException("TrailerForge source is missing editor_core.py.");
                     if (string.IsNullOrWhiteSpace(tool.Executable))
                         tool.Executable = ProcessRunner.FindExecutable("python") ?? throw new InvalidOperationException("TrailerForge requires an installed Python executable.");
+                    if (string.IsNullOrWhiteSpace(tool.WorkspaceRoot))
+                        tool.WorkspaceRoot = project.Root;
+                    break;
+
+                case "aivideo":
+                    if (!File.Exists(Path.Combine(tool.SourcePath, "editor_core.py")) || !File.Exists(Path.Combine(tool.SourcePath, "aigen_jobs.py")))
+                        throw new InvalidOperationException("AIVideoStudio source is missing editor_core.py or aigen_jobs.py.");
+                    if (string.IsNullOrWhiteSpace(tool.Executable))
+                        tool.Executable = ProcessRunner.FindExecutable("python") ?? throw new InvalidOperationException("AIVideoStudio requires an installed Python executable.");
                     if (string.IsNullOrWhiteSpace(tool.WorkspaceRoot))
                         tool.WorkspaceRoot = project.Root;
                     break;

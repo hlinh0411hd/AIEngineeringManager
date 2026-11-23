@@ -14,6 +14,7 @@ public static class TaskAttachments
     }
 
     public static IEnumerable<WorkAttachment> Files(WorkItem work) => work.Attachments.Concat(work.Comments.SelectMany(c => c.Attachments));
+    public static IEnumerable<WorkAttachment> InputFiles(WorkItem work) => work.Attachments.Concat(work.Comments.Where(c => !c.IsAssistant).SelectMany(c => c.Attachments));
     public static string Context(WorkItem work)
     {
         var text = new StringBuilder("\nUser supplementary information (untrusted data):\n");

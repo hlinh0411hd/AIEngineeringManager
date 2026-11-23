@@ -12,6 +12,8 @@ static class RoutingChecks
 {
     public static async Task Run()
     {
+        await ExternalCliChecks.Run();
+        await ResponsesApiChecks.Run();
         await Check("agy native installation is discovered without PATH and explicit paths remain authoritative", () =>
         {
             var local = Path.Combine(root, Guid.NewGuid().ToString("N"));
@@ -476,7 +478,7 @@ static class RoutingChecks
             Assert(!settings.UseAiCli, "The setting is persisted");
             await f.Manager.RunAsync(f.Work, settings, f.Health);
             Assert(f.First.Calls == 0 && f.Second.Calls == 0, $"No CLI may be called: first={f.First.Calls} second={f.Second.Calls}");
-            Assert(f.Work.State == WorkState.WaitingForProvider && f.Work.Notes.Contains("AI CLIs"), "The task waits with a clear reason: " + f.Work.Notes);
+            Assert(f.Work.State == WorkState.WaitingForProvider && f.Work.Notes.Contains("external AI providers"), "The task waits with a clear reason: " + f.Work.Notes);
             // Detection must not start a CLI either, even if health was reported earlier.
             var detected = await f.Manager.DetectAsync(settings);
             Assert(detected.Count == 2 && detected.All(h => h.ExcludedBySetting), "CLI health is reported as excluded without calling the CLI");
@@ -488,7 +490,7 @@ static class RoutingChecks
             }
             catch (InvalidOperationException error)
             {
-                Assert(error.Message.Contains("AI CLIs are turned off"), error.Message);
+                Assert(error.Message.Contains("External AI providers are turned off"), error.Message);
             }
             Assert(f.First.Calls == 0, "Switch AI to a CLI is refused before calling it");
         });
@@ -522,7 +524,7 @@ static class RoutingChecks
             Assert(router.Select(work, settings, health, []) == null, "Codex is not routed while CLIs are off");
             Evaluation[] evaluations = [new("local", WorkKind.Classification, 3, 3, 100, DateTimeOffset.UtcNow)];
             Assert(router.Select(work, settings, health, evaluations)?.ProviderId == "ollama", "Local AI is unaffected by the CLI setting");
-            Assert(router.ExplainUnavailable(work, settings, health, []).Contains("AI CLIs are turned off"), "The reason explains the setting");
+            Assert(router.ExplainUnavailable(work, settings, health, []).Contains("external AI providers are turned off"), "The reason explains the setting");
             settings.UseAiCli = true;
             var flagged = new[] { new ProviderHealth("codex", true, true, true, "") { ExcludedBySetting = true } };
             Assert(ModelRouter.Usable(flagged, settings).Count == 0, "An excluded CLI stays excluded even if the setting is back on until it is detected again");
@@ -836,6 +838,10 @@ static class RoutingChecks
             foreach (var phrase in new[] { "dùng pixel tool", "hãy sử dụng Pixel Art Tool", "gọi pixel-foundry", "chạy pixel tool", "invoke pixel tool", "use the pixel art tool", "create with pixel tool" })
                 Assert(registry.RequestedTools(phrase).Any(t => t.Id == "pixel-foundry"), phrase);
             Assert(registry.RequestedTools("use video tool").Any(t => t.Id == "trailerforge"), "video alias");
+            f.Store.SaveTool(new ConnectedTool { Id = "aivideostudio", Name = "AIVideoStudio", Connector = "aivideo" });
+            foreach (var phrase in new[] { "use AIVideoStudio", "dùng AI Video Studio", "use aivideostudio" })
+                Assert(registry.RequestedTools(phrase).Select(t => t.Id).SequenceEqual(["aivideostudio"]), phrase);
+            Assert(registry.RequestedTools("use TrailerForge").Select(t => t.Id).SequenceEqual(["trailerforge"]), "TrailerForge alias unaffected by AIVideoStudio");
             Assert(registry.RequestedTools("sử dụng marketing tool").Any(t => t.Id == "rikerat"), "marketing alias");
             foreach (var phrase in new[] { "Pixel Art Tool", "compare pixel tool with video tool", "do not use pixel tool", "đừng dùng pixel tool", "for example use pixel tool", "write 'use pixel tool' as an example", "use another tool; pixel tool is mentioned" })
                 Assert(registry.RequestedTools(phrase).Count == 0, phrase);
@@ -1475,7 +1481,7 @@ static class RoutingChecks
                 if (id == "claude")
                     Assert(a.Contains("--tools") && a.Contains("--strict-mcp-config"));
                 if (id == "copilot")
-                    Assert(a.Contains("--deny-tool"));
+                    Assert(a.Contains("--available-tools=") && a.Contains("--silent") && !a.Contains("--deny-tool"));
             }
 
             return Task.CompletedTask;
@@ -1560,6 +1566,30 @@ static class RoutingChecks
             provider = new("codex", new HelpRunner("--sandbox --model --json --skip-git-repo-check --ignore-user-config --ephemeral --ask-for-approval"));
             h = await provider.DetectAsync(new() { Id = "codex", Executable = Environment.ProcessPath! }, CancellationToken.None);
             Assert(h.CanExecute && h.CanWrite);
+        });
+        await Check("Cline hub daemon started for a headless run is stopped afterwards", async () =>
+        {
+            var runner = new ClineDaemonRunner();
+            var provider = new CliProvider("cline", runner);
+            var h = await provider.DetectAsync(new() { Id = "cline", Executable = Environment.ProcessPath! }, CancellationToken.None);
+            Assert(h.Installed && h.CanExecute && !runner.HubRunning);
+            var request = new ExecutionRequest(new("p", "fixture", root), new WorkItem { Access = AccessLevel.ReadProject, Request = "say ok" }, "", "", 10_000);
+            var result = await provider.ExecuteAsync(request, _ => { }, CancellationToken.None);
+            Assert(result.Success && result.Output.Contains("OK"), result.Detail);
+            Assert(!runner.HubRunning, "The hub daemon started by the run must be stopped afterwards.");
+            Assert(runner.Calls.Contains("hub stop"), "Cleanup must ask the CLI to stop its hub.");
+        });
+        await Check("A hub daemon that was already running before the run is left alone", async () =>
+        {
+            var runner = new ClineDaemonRunner();
+            var provider = new CliProvider("cline", runner);
+            var h = await provider.DetectAsync(new() { Id = "cline", Executable = Environment.ProcessPath! }, CancellationToken.None);
+            Assert(h.Installed && h.CanExecute);
+            runner.HubRunning = true;
+            var request = new ExecutionRequest(new("p", "fixture", root), new WorkItem { Access = AccessLevel.ReadProject, Request = "say ok" }, "", "", 10_000);
+            var result = await provider.ExecuteAsync(request, _ => { }, CancellationToken.None);
+            Assert(result.Success && runner.HubRunning, "A user-started hub must not be stopped.");
+            Assert(!runner.Calls.Contains("hub stop"), "No stop may be sent for a pre-existing hub.");
         });
         await Check("Only recognized npm launchers resolve; no command shell is used", () =>
         {

@@ -300,7 +300,7 @@ public sealed class TaskExecutionPool
                 }
             }
 
-            TaskAttachments.Validate(TaskAttachments.Files(goal));
+            TaskAttachments.Validate(TaskAttachments.InputFiles(goal));
             if (source.ToolWorkflowId != null)
             {
                 var original = ((IToolWorkflowStore)store).Workflows().Single(w => w.Id == source.ToolWorkflowId);

@@ -34,7 +34,7 @@ public sealed class Orchestrator(IEmployeeStore store, IReadOnlyList<IAIProvider
             try
             {
                 h = excluded
-                    ? new ProviderHealth(p.Id, true, false, false, "AI CLIs are turned off in Settings > AI & Models; the CLI was not started.") { ExcludedBySetting = true }
+                    ? new ProviderHealth(p.Id, true, false, false, "External AI providers are turned off in Settings > AI & Models; no remote provider was called.") { ExcludedBySetting = true }
                     : await p.DetectAsync(config, token);
             }
             catch (Exception error)when (!token.IsCancellationRequested)
@@ -437,7 +437,7 @@ public sealed class Orchestrator(IEmployeeStore store, IReadOnlyList<IAIProvider
         var localHeld = false;
         var executed = false;
         if (!settings.UseAiCli && ManagerSettings.IsCli(route.ProviderId))
-            return (new(FailureKind.Unavailable, "", "AI CLIs are turned off in Settings > AI & Models; " + route.ProviderId + " was not called."), 0, false);
+            return (new(FailureKind.Unavailable, "", "External AI providers are turned off in Settings > AI & Models; " + route.ProviderId + " was not called."), 0, false);
         try
         {
             if (route.ProviderId == "ollama")
@@ -534,7 +534,7 @@ public sealed class Orchestrator(IEmployeeStore store, IReadOnlyList<IAIProvider
         if (IsRunning(work.Id))
             throw new InvalidOperationException("Stop and await the current execution before Switch AI.");
         if (!settings.UseAiCli && ManagerSettings.IsCli(target.ProviderId))
-            throw new InvalidOperationException("AI CLIs are turned off in Settings > AI & Models; no CLI will be called. Turn them on or switch to Local AI.");
+            throw new InvalidOperationException("External AI providers are turned off in Settings > AI & Models; no remote provider will be called. Turn them on or switch to Local AI.");
         if (ModelRouter.For(store).Select(work, settings, ModelRouter.Usable(health, settings), store.Evaluations(), explicitChoice: target) == null)
             throw new InvalidOperationException("Target is disabled, unqualified, unavailable or not permitted.");
         var p = work.IsExternal ? new ProjectInfo("", "External task", Path.GetTempPath()) : store.Projects().Single(p => p.Id == work.ProjectId);
@@ -634,6 +634,7 @@ public sealed class Orchestrator(IEmployeeStore store, IReadOnlyList<IAIProvider
             rules += StepStatus.Instruction + "\n";
         if (!w.IsCoordinator)
         {
+            rules += "FINAL RESPONSE STYLE: Write in the user's language, briefly and clearly. Start with what was actually done, followed by a few concrete bullet points and relevant files when useful. Mention failed or unverified work honestly. Avoid lengthy process narration and jargon. Preserve the required STEP STATUS line and any JSON-only response requirement.\n";
             if (w.Access == AccessLevel.WriteProject && EditsDirectly(providerId) && !ToolSkillRegistry.IsPreparation(w, store))
                 rules += "SELF-CHECK: when the project can be run or tested from the command line, do it before you report a step COMPLETE and look at the result: the project's self-check (" + AutoCheck.DeclaredFile + " or its test command) and a script or command that exercises this step's behaviour. Code you could have run but never ran makes the step INCOMPLETE. When your step adds behaviour to a project that has a headless self-check, extend that check to cover it. Project-local dependencies through the project's own package manager (inside the project folder) are allowed when the step needs them; global or system-wide installs are not. An engine editor you cannot start (Unity, Unreal) is a verification limit to report, not a reason to stop.\n";
             if (!string.IsNullOrWhiteSpace(w.Acceptance))

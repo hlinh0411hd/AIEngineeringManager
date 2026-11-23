@@ -68,6 +68,20 @@ public sealed class TelegramBotClient : IDisposable
         ["inline_keyboard"] = rows.Select(row => row.Select(b => new Dictionary<string, string> { ["text"] = b.Label, ["callback_data"] = b.Data }).ToArray()).ToArray()
     };
 
+    public async Task<int> SendMediaAsync(long chatId, WorkAttachment attachment, int replyTo, CancellationToken cancel)
+    {
+        if (!TaskResultMedia.IsMedia(attachment.Name) || attachment.Content.Length is 0 or > TaskResultMedia.MaxBytes)
+            throw new ArgumentException("Unsupported or oversized result media.");
+        var extension = Path.GetExtension(attachment.Name).ToLowerInvariant();
+        var field = extension is ".jpg" or ".jpeg" or ".png" ? "photo" : extension == ".mp4" ? "video" : extension is ".mp3" or ".m4a" ? "audio" : "document";
+        using var form = new MultipartFormDataContent();
+        form.Add(new StringContent(chatId.ToString(System.Globalization.CultureInfo.InvariantCulture)), "chat_id");
+        form.Add(new StringContent(replyTo.ToString(System.Globalization.CultureInfo.InvariantCulture)), "reply_to_message_id");
+        form.Add(new ByteArrayContent(attachment.Content), field, Path.GetFileName(attachment.Name));
+        var result = await CallAsync("send" + char.ToUpperInvariant(field[0]) + field[1..], null, TimeSpan.FromMinutes(2), cancel, form);
+        return result.GetProperty("message_id").GetInt32();
+    }
+
     public async Task AnswerCallbackQueryAsync(string callbackQueryId, string text, CancellationToken cancel)
     {
         var body = new Dictionary<string, object?> { ["callback_query_id"] = callbackQueryId };
@@ -131,7 +145,7 @@ public sealed class TelegramBotClient : IDisposable
 
     private static readonly System.Text.RegularExpressions.Regex BotUrlSecret = new(@"bot\d+(?::|%3A)[A-Za-z0-9_\-]+", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
 
-    private async Task<JsonElement> CallAsync(string method, object? body, TimeSpan timeout, CancellationToken cancel)
+    private async Task<JsonElement> CallAsync(string method, object? body, TimeSpan timeout, CancellationToken cancel, HttpContent? content = null)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancel);
         deadline.CancelAfter(timeout);
@@ -139,7 +153,7 @@ public sealed class TelegramBotClient : IDisposable
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, $"https://api.telegram.org/bot{token}/{method}")
             {
-                Content = new StringContent(JsonSerializer.Serialize(body ?? new { }), Encoding.UTF8, "application/json")
+                Content = content ?? new StringContent(JsonSerializer.Serialize(body ?? new { }), Encoding.UTF8, "application/json")
             };
             using var response = await http.SendAsync(request, deadline.Token);
             var json = await response.Content.ReadAsStringAsync(deadline.Token);

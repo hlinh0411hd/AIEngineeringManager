@@ -377,7 +377,7 @@ internal static class PixelRequest
         if (input["fallbackToApi"] != null) input["fallbackToApi"] = Bool(input["fallbackToApi"]) == true;
         var provider = Text(input["provider"]);
         if (provider == null) return;
-        if (provider is not ("codex" or "claude" or "pixellab" or "api") || options.Providers?.ContainsKey(provider) != true)
+        if (provider is not ("codex" or "claude" or "pixellab" or "api") || options.Provider(provider) == null)
         {
             input.Remove("provider");
             notes.Add($"provider '{provider}' not offered by this tool; Codex CLI is used");
@@ -385,7 +385,7 @@ internal static class PixelRequest
         }
         if (provider == "api")
         {
-            var vendors = options.Providers!["api"].Vendors ?? [];
+            var vendors = options.Provider("api")?.Vendors ?? [];
             var vendor = Text(input["apiVendor"]);
             if (vendor == null || !vendors.ContainsKey(vendor))
             {

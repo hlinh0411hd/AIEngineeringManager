@@ -7,12 +7,13 @@ namespace Employee.Desktop;
 public partial class MainWindow
 {
     private static bool NeedsCliInstallation(ProviderHealth status) => !status.Installed || status.StandaloneCliMissing;
+    private static bool NoAdapter(ProviderHealth status) => status.Detail.Contains("No execution adapter", StringComparison.Ordinal) || status.Detail.Contains("intentionally does not execute", StringComparison.Ordinal);
     private void ProviderStatusActionLoaded(object sender, RoutedEventArgs e)
     {
         if (sender is not Button button || button.DataContext is not ProviderHealth status)
             return;
-        button.Content = NeedsCliInstallation(status) ? "Install CLI…" : !status.CanExecute ? "Configure CLI…" : status.Id == "claude" && status.Authentication == "NotAuthenticated" ? "Sign in / verify…" : "Verify again";
-        button.ToolTip = "Action for the current status; never installs anything or runs an AI request.";
+        button.Content = NoAdapter(status) ? "Detected · not runnable here" : status.Id == "responses-api" ? status.CanExecute ? "Check API…" : "Configure API…" : NeedsCliInstallation(status) ? "Install CLI…" : !status.CanExecute ? "Configure CLI…" : status.Id == "claude" && status.Authentication == "NotAuthenticated" ? "Sign in / verify…" : "Verify again";
+        button.ToolTip = NoAdapter(status) ? "The CLI Tool API detected this agent; this manager has no headless adapter for it." : "Action for the current status; never installs software or runs inference.";
     }
 
     private async void ProviderStatusAction(object sender, RoutedEventArgs e) => await Guard(async () =>
@@ -20,6 +21,25 @@ public partial class MainWindow
         IdleOnly();
         if (sender is not Button { DataContext: ProviderHealth status })
             return;
+        if (NoAdapter(status))
+        {
+            MessageBox.Show(this, status.Detail, status.Id + " · detected by CLI Tool API", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        if (status.Id == "responses-api")
+        {
+            if (!status.CanExecute)
+            {
+                OpenSettingsSection("AI");
+                ProviderChoice.SelectedItem = status.Id;
+                LoadProvider();
+                ProviderExe.Focus();
+                return;
+            }
+
+            await VerifyProviderStatus(status.Id);
+            return;
+        }
         if (NeedsCliInstallation(status) || status.Id == "claude" && status.Authentication == "NotAuthenticated")
         {
             ShowProviderSetup(status);
@@ -41,12 +61,13 @@ public partial class MainWindow
     {
         IdleOnly();
         if (!settings.UseAiCli && ManagerSettings.IsCli(id))
-            throw new InvalidOperationException("AI CLIs are turned off in Settings > AI & Models; " + id + " was not called.");
+            throw new InvalidOperationException("External AI providers are turned off in Settings > AI & Models; " + id + " was not called.");
         detecting = true;
         Status.Text = $"Verifying {id}; status check only, no AI content is generated…";
         try
         {
-            var provider = providers.Single(p => p.Id == id);
+            var provider = providers.FirstOrDefault(p => p.Id == id)
+                ?? throw new InvalidOperationException(id + " has no execution adapter in this manager. Its agents and models still come from the CLI Tool API; update aihub or choose a supported agent.");
             var config = settings.Providers.Single(p => p.Id == id);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             var result = await provider.DetectAsync(config, timeout.Token);
@@ -58,6 +79,7 @@ public partial class MainWindow
             if (!config.Enabled && result.CanExecute && result.Authentication == "Authenticated")
             {
                 config.Enabled = true;
+                config.AllowProjectWrite = id is not ("ollama" or "custom-cli" or "clixad");
                 if (config.Models.Count == 0)
                     config.Models.Add(new("", Enum.GetValues<WorkKind>()));
                 store.SaveSettings(settings);
@@ -103,7 +125,12 @@ public partial class MainWindow
         {
             Margin = new Thickness(20)
         };
-        panel.Children.Add(new TextBlock { Text = login ? "Claude CLI is ready but not signed in. Open a terminal, run the configured CLI and sign in with /login. When done, click Verify again." : "Open the official guide to install the CLI. If it is already installed, choose Configure path. When done, click Verify again. Copilot Desktop and Copilot CLI are separate installs.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) });
+        var instructions = status.Id == "custom-cli"
+            ? "Install the agent CLI yourself, then configure its executable, arguments and optional API key in Settings > AI & Models. Detection checks the configuration only; it does not start the agent."
+            : login
+                ? "Claude CLI is ready but not signed in. Open a terminal, run the configured CLI and sign in with /login. When done, click Verify again."
+                : "Open the official guide to install the CLI. If it is already installed, choose Configure path. When done, click Verify again. Copilot Desktop and Copilot CLI are separate installs.";
+        panel.Children.Add(new TextBlock { Text = instructions, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) });
         panel.Children.Add(new TextBox { Text = status.Detail, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 150, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
         var actions = new WrapPanel
         {

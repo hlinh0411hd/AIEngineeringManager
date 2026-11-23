@@ -587,6 +587,16 @@ static class AcceptanceChecks
         // TrailerForge's AI video generator runs through the bridge: an AI call, and only a real MP4 in the run folder counts.
         {
             Assert(ToolExecutionService.Capabilities("video").Single(c => c.Id == "generate") is { Writes: true, UsesAI: true, Publishes: false }, "Making a video counts as an AI call");
+            Assert(ToolExecutionService.Capabilities("aivideo").Single(c => c.Id == "generate") is { Writes: true, UsesAI: true, Publishes: false } && ToolExecutionService.Capabilities("aivideo").Single(c => c.Id == "export").Writes && !ToolExecutionService.Capabilities("aivideo").Single(c => c.Id == "status").Writes, "AIVideoStudio operations are registered with the right write/AI flags");
+            Assert(ToolExecutionService.Capabilities("aivideo").Select(c => c.Id).Order().SequenceEqual(["export", "generate", "inspect", "status"]), "AIVideoStudio connector lists status, inspect, export and generate");
+            {
+                var appRoot = AppContext.BaseDirectory;
+                while (appRoot != null && !File.Exists(Path.Combine(appRoot, "AIEmployeeManager.slnx")))
+                    appRoot = Path.GetDirectoryName(appRoot);
+                var seed = File.ReadAllText(Path.Combine(appRoot ?? "", "src", "Employee.Desktop", "ControlCenterView.cs"));
+                Assert(seed.Contains("Id = \"trailerforge\"", StringComparison.Ordinal) && seed.Contains("Id = \"aivideostudio\"", StringComparison.Ordinal) && seed.Contains("Id = \"zapbop\"", StringComparison.Ordinal) && seed.Contains("Connector = \"aivideo\"", StringComparison.Ordinal), "The aivideostudio seed sits next to the existing tools");
+                Assert(File.Exists(Path.Combine(appRoot ?? "", "connectors", "aivideostudio_bridge.py")), "The AIVideoStudio bridge ships with the app");
+            }
             var videoRun = Path.Combine(Path.GetTempPath(), "EmployeeAcceptanceChecks", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(Path.Combine(videoRun, "Trailer abc", "export"));
             var mp4 = new byte[2048];

@@ -87,6 +87,7 @@ public sealed class ControlCenterView : UserControl, IDisposable
         {
             "pixel",
             "video",
+            "aivideo",
             "music",
             "marketing"
         }
@@ -315,6 +316,8 @@ public sealed class ControlCenterView : UserControl, IDisposable
                 {
                     "marketing" when c.Id == "export" => "{\"jobId\":\"ID\"}",
                     "video" when c.Id == "generate" => "{\"mode\":\"assets\",\"asset_folder\":\"CHOOSE_PROJECT_FOLDER_WITH_SCREENSHOTS\",\"title\":\"Game trailer\",\"duration\":30,\"format\":\"1080p\",\"style\":\"promo\",\"language\":\"en\"}",
+                    "aivideo" when c.Id == "generate" => "{\"mode\":\"text\",\"topic\":\"A 30-second promo for my game\",\"duration\":30,\"format\":\"1080p\",\"style\":\"promo\",\"language\":\"en\"}",
+                    "aivideo" when c.Id == "status" => "{}",
                     "music" => c.Id switch
                     {
                         "status" => "{}",
@@ -733,6 +736,17 @@ public sealed class ControlCenterView : UserControl, IDisposable
                 SourcePath = @"D:\Projects\TrailerForge\outputs\TrailerForge",
                 DesktopExecutable = @"D:\Projects\TrailerForge\TrailerForge\TrailerForge.exe",
                 Executable = ProcessRunner.FindExecutable("python") ?? ""
+            },
+            new ConnectedTool
+            {
+                // Seeded disabled like the others; enable it and choose the allowed workspace in Tools.
+                Id = "aivideostudio",
+                Name = "AIVideoStudio",
+                Connector = "aivideo",
+                SourcePath = @"D:\Projects\AIVideoStudio\src",
+                DesktopExecutable = @"D:\Projects\AIVideoStudio\AIVideoStudio\AIVideoStudio.exe",
+                // PATH Python often lacks Pillow/imageio_ffmpeg/edge_tts; the TrailerForge venv has them (same engine).
+                Executable = File.Exists(@"D:\Projects\TrailerForge\.venv\Scripts\python.exe") ? @"D:\Projects\TrailerForge\.venv\Scripts\python.exe" : ProcessRunner.FindExecutable("python") ?? ""
             },
             new ConnectedTool
             {

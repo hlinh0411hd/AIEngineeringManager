@@ -59,19 +59,36 @@ public partial class MainWindow
     {
         IdleOnly();
         if (!settings.UseAiCli)
-            throw new InvalidOperationException("AI CLIs are turned off in Settings > AI & Models. Turn them on first; no CLI was called.");
+            throw new InvalidOperationException("External AI providers are turned off in Settings > AI & Models. Turn them on first; no remote provider was called.");
         detecting = true;
         try
         {
             store.Backup(Path.Combine(dataPath, "backups", "providers-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff") + ".db"));
-            var report = await new ProviderSetupService(store, providers).EnableAvailableAsync();
-            settings = store.LoadSettings();
-            File.WriteAllText(Path.Combine(dataPath, "provider-setup-report.json"), JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
-            health = await orchestrator.DetectAsync(settings);
+            using var client = new CliToolApiClient();
+            var result = await new CliToolProviderDiscovery(providerInstances, client).DiscoverAsync(settings, CancellationToken.None);
+            cliToolApiStatus = result.Detail;
+            RefreshCliToolApiStatus();
+            var known = providerInstances.Select(p => p.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            RebuildProviders();
+            if (result.Reachable && providerInstances.Any(p => !known.Contains(p.Id) && CliProvider.HasExecutionProfile(p.Id)))
+            {
+                result = await new CliToolProviderDiscovery(providerInstances, client).DiscoverAsync(settings, CancellationToken.None);
+                cliToolApiStatus = result.Detail;
+                RefreshCliToolApiStatus();
+            }
+            health = result.Health;
             HealthGrid.ItemsSource = health;
+            IReadOnlyList<ProviderSetupResult> report = result.Reachable ? CliToolProviderDiscovery.EnableUsable(settings, health) : [];
+            store.SaveSettings(settings);
+            File.WriteAllText(Path.Combine(dataPath, "provider-setup-report.json"), JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+            settings = store.LoadSettings();
+            ModelCatalogMerge.AssignAutomaticRoles(settings, health, store);
+            store.SaveSettings(settings);
+            RefreshProviderChoices();
             LoadProvider();
             RefreshRoutes();
-            Status.Text = string.Join(" · ", report.Select(r => $"{r.Provider}: {(r.Enabled ? "enabled" : r.Ready ? "authentication/qualification needed" : "unavailable")} "));
+            RefreshAgentsGrid();
+            Status.Text = result.Detail + (report.Count == 0 ? "" : " " + string.Join(" · ", report.Select(r => $"{r.Provider}: {(r.Enabled ? "enabled" : r.Ready ? "not enabled" : "unavailable")}")));
             HistoryText.Text = JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true });
         }
         finally

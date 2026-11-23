@@ -53,9 +53,19 @@ The manager can inspect and route work to configured local AI providers and comm
 - OpenCode
 - Qoder
 - Antigravity
+- Kilo Code
+- Cline
+- clixad (read-only, credit/free-turn aware)
+- Devin CLI
+- Configurable Custom CLI agents
+- OpenAI-compatible Responses API endpoints
 - Ollama for qualified local categories
 
 Provider availability is detected from the installed executable and its capabilities. The application does not assume that an installed executable means that the user is authenticated, has quota, or can use every model. Provider, model, access, priority, and write permissions are configured explicitly in **Settings > AI & Models**.
+
+For other headless agents, configure **Custom CLI agent** in **Settings > AI & Models** with its executable, a JSON array of arguments, and (optionally) an API-key environment variable and key. Arguments may use `{prompt}` and `{model}`; if `{prompt}` is omitted, the request is sent on stdin. The API key is protected with Windows DPAPI. Detection does not launch the CLI, and model IDs can be added manually. Custom CLI agents are restricted to **TextOnly** tasks; the manager does not provide a project path or project files. The process still runs with the current Windows user's permissions and is not OS-sandboxed, so configure only an agent you trust.
+
+For an OpenAI-compatible **Responses API**, choose **responses-api** under **Settings > AI & Models**, enter the API root URL (for example `https://codex.fosta.app/v1`) and API key, then detect the provider and choose/add an exact model ID. The manager appends `/models` for a no-inference connection check and `/responses` for generation. The API key is protected with Windows DPAPI; read/write project tasks use bounded context and reviewed edit proposals.
 
 #### How a model is chosen
 
@@ -63,7 +73,7 @@ Routing is deterministic C# policy. It makes no AI call and every decision recor
 
 - **Work type and difficulty.** Each step is classified (code, debugging, UI/UX, architecture, graphics/math, testing, review, research, writing, translation, image work, and more) and given a 0–100 difficulty. Easy work needs a lower quality bar than hard work.
 - **Model order per work type.** Every work type has an ordered list of models. The router takes the first usable model that meets the step's bar, so cheap models take easy work and stronger models take hard work. Models that are not installed, blocked, out of usage, or already sent back on the step are skipped and the next one is used. Some entries carry a difficulty cap, for example Sonnet for architecture only up to difficulty 69, then Opus.
-- **Claude and Codex first.** By default Claude Code and Codex are the primary providers. The other CLIs (Qoder, Antigravity, Copilot, OpenCode, Gemini) only run a step when neither primary provider can. Qualified local Ollama models stay eligible for classification and extraction.
+- **Claude and Codex first.** By default Claude Code and Codex are the primary providers. The other CLIs (Qoder, Antigravity, Copilot, OpenCode, Gemini, Kilo, Cline, clixad, Devin) only run a step when neither primary provider can. Qualified local Ollama models stay eligible for classification and extraction.
 - **Reviews by a different AI.** A review step is given to a different provider than the one that wrote the work it reviews, when one is usable, so a model does not grade its own output.
 - **Ratings that keep up.** Built-in quality ratings and relative usage costs come from public benchmarks and pricing. Update them without rebuilding: edit `model-ratings.json` in the data folder, or point **Settings > AI & Models > Model ratings** at a JSON URL that is refreshed daily. The same file can change the model order.
 - **Learning from your decisions.** Approvals and send-backs adjust a model's score for that work type by at most 12 points, fading over about 30 days. A verdict on a whole task is divided between its steps, so one weak step does not mark every model that worked on it. **Reset learning** discards the history of judgments.

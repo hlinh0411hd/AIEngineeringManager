@@ -156,14 +156,14 @@ static class GeneralChecks
             var result = new System.Text.Json.Nodes.JsonObject { ["projectAssetPath"] = png, ["status"] = "completed", ["sheetWidth"] = 128, ["sheetHeight"] = 128, ["columns"] = 1, ["rows"] = 1, ["frameWidth"] = 128, ["frameHeight"] = 128,
                 ["result"] = new System.Text.Json.Nodes.JsonObject { ["output"] = new System.Text.Json.Nodes.JsonObject { ["video"] = video }, ["quality"] = new System.Text.Json.Nodes.JsonObject { ["provider"] = "claude", ["problems"] = new System.Text.Json.Nodes.JsonArray() } } };
             var made = ToolResultComment.Build(result.ToJsonString(), "Draw the cat")!.Value;
-            Assert(made.Attachments.Count == 1 && made.Attachments[0].Name == "cat.png", "The image is attached");
+            Assert(made.Attachments.Count == 2 && made.Attachments[0].Name == "cat.png" && made.Attachments[1].Name == "clip.mp4", "The image and video are attached");
             Assert(made.Text.Contains(ToolResultComment.FilePrefix + png) && made.Text.Contains(ToolResultComment.FilePrefix + video) && made.Text.Contains(ToolResultComment.FolderPrefix + folder) && made.Text.Contains("Made by Claude CLI") && !made.Text.Contains("{"), made.Text);
             Assert(ToolResultComment.Build("not json", "x") == null, "Plain text stays as it was");
             var option = Path.Combine(folder, "cat-option-2.png");
             File.WriteAllBytes(option, [137, 80, 78, 71, 13, 10, 26, 10, 1, 1, 1, 1]);
             result["optionPaths"] = new System.Text.Json.Nodes.JsonArray(option);
             var withOptions = ToolResultComment.Build(result.ToJsonString(), "Draw the cat")!.Value;
-            Assert(withOptions.Attachments.Select(a => a.Name).SequenceEqual(["cat.png", "cat-option-2.png"]), "Other candidates show next to the main image: " + string.Join(",", withOptions.Attachments.Select(a => a.Name)));
+            Assert(withOptions.Attachments.Select(a => a.Name).SequenceEqual(["cat.png", "clip.mp4", "cat-option-2.png"]), "Other candidates and video show next to the main image: " + string.Join(",", withOptions.Attachments.Select(a => a.Name)));
             return Task.CompletedTask;
         });
         await Check("The tool's own quality check is summarised for the task log", () =>

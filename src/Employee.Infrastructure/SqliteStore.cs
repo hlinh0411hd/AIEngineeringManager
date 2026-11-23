@@ -187,8 +187,9 @@ public sealed partial class SqliteStore : IEmployeeStore
     public ManagerSettings LoadSettings()
     {
         var settings = Read("SELECT data FROM settings WHERE id=1", Decode<ManagerSettings>).FirstOrDefault() ?? new();
-        // Settings saved by older builds lack providers added since; expose them disabled until detected.
-        foreach (var id in ManagerSettings.DefaultProviderIds)
+        // Settings saved by older builds may lack a built-in provider; CLI agents are only re-seeded
+        // until the CLI Tool API has taken ownership of the provider list.
+        foreach (var id in settings.ProvidersManagedByCliToolApi ? ManagerSettings.BuiltInProviderIds : ManagerSettings.DefaultProviderIds)
             if (settings.Providers.All(p => p.Id != id))
                 settings.Providers.Add(new() { Id = id });
         if (settings.Automation.LimitsVersion < 1)

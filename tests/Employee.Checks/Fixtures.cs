@@ -244,6 +244,31 @@ sealed class HelpRunner(string help) : IProcessRunner
     public Task<ProcessResult> RunAsync(string e, IReadOnlyList<string> a, string d, string? i, int l, Action<string>? o, CancellationToken t, IReadOnlyDictionary<string, string>? environment = null) => Task.FromResult(new ProcessResult(0, help));
 }
 
+// Emulates the Cline CLI and its hub daemon: a task run starts the hub, which must be stopped
+// again by the manager once the run finishes.
+sealed class ClineDaemonRunner : IProcessRunner
+{
+    public bool HubRunning { get; set; }
+    public List<string> Calls { get; } = [];
+    public Task<ProcessResult> RunAsync(string e, IReadOnlyList<string> a, string d, string? i, int l, Action<string>? o, CancellationToken t, IReadOnlyDictionary<string, string>? environment = null)
+    {
+        var args = a.ToList();
+        Calls.Add(string.Join(' ', args));
+        if (args.Contains("--help"))
+            return Task.FromResult(new ProcessResult(0, "Usage: cline [options] [command] [prompt]\n  --json\n  --auto-approve <boolean>\n  -c, --cwd <path>\n  -m, --model <model-id>"));
+        if (args.SequenceEqual(["hub", "status"]))
+            return Task.FromResult(new ProcessResult(0, HubRunning ? "{\"running\":true,\"url\":\"ws://127.0.0.1:25463/hub\"}" : "{\"running\":false}"));
+        if (args.SequenceEqual(["hub", "stop"]))
+        {
+            HubRunning = false;
+            return Task.FromResult(new ProcessResult(0, "{\"stopped\":true}"));
+        }
+
+        HubRunning = true;
+        return Task.FromResult(new ProcessResult(0, "{\"type\":\"run_result\",\"text\":\"OK\",\"finishReason\":\"completed\"}"));
+    }
+}
+
 sealed class ValidationRunner(Action? mutation = null) : IProcessRunner
 {
     public Task<ProcessResult> RunAsync(string e, IReadOnlyList<string> a, string d, string? i, int l, Action<string>? o, CancellationToken t, IReadOnlyDictionary<string, string>? environment = null)

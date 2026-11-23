@@ -355,7 +355,7 @@ public partial class MainWindow
             var providerRows = settings.Providers.Select(p =>
             {
                 var h = health.FirstOrDefault(v => v.Id == p.Id);
-                return new ProviderOverview(p.Id, !p.Enabled ? "Off" : !settings.UseAiCli && ManagerSettings.IsCli(p.Id) ? "AI CLIs turned off" : h == null ? "Not checked" : !h.CanExecute ? "Unavailable" : "Ready to request (usage unverified)", $"Auth: {h?.Authentication ?? "Unknown"} · Usage/quota: {h?.Usage ?? "Unknown"}", p.Id == "ollama" ? p.Models.FirstOrDefault(m => !m.Blocked)?.Id ?? "" : "");
+                return new ProviderOverview(p.Id, !p.Enabled ? "Off" : !settings.UseAiCli && ManagerSettings.IsCli(p.Id) ? "External providers off" : h == null ? "Not checked" : !h.CanExecute ? "Unavailable" : "Ready to request (usage unverified)", $"Auth: {h?.Authentication ?? "Unknown"} · Usage/quota: {h?.Usage ?? "Unknown"}", p.Id == "ollama" ? p.Models.FirstOrDefault(m => !m.Blocked)?.Id ?? "" : "");
             }).ToArray();
             string Display(WorkItem? work) => work?.ProviderId == null ? "Not assigned" : work.ProviderId + " / " + work.ModelDisplay;
             var coordinatorLabel = coordinator != null ? Display(coordinator) : session?.Coordinator is { } route ? route.ProviderId + " / " + Orchestrator.DisplayModel(route.ModelId) : "C# orchestrator";

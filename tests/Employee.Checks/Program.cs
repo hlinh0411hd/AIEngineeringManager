@@ -451,6 +451,11 @@ if (args.FirstOrDefault() == "--detect")
 }
 
 Harness.Start(args);
+if (args.FirstOrDefault() == "--general")
+{
+    await GeneralChecks.Run();
+    return Harness.Failed == 0 ? 0 : 1;
+}
 await DataChecks.Run();
 await RoutingChecks.Run();
 await TaskFlowChecks.Run();

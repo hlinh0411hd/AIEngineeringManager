@@ -71,4 +71,23 @@ public static class ModelCatalogMerge
 
         provider.ModelCatalogCheckedAt = DateTimeOffset.UtcNow;
     }
+
+    // Every model the CLI still lists for this account stays available; only entries that are no
+    // longer reported (or are not chat models at all) are dropped. User choices, successful-run
+    // evidence and the CLI default entry are never removed by a catalog refresh.
+    private static readonly string[] NonChatModelTerms = ["embed", "whisper", "tts", "text-to-speech", "moderation", "rerank", "transcribe", "bge-", "clip-", "guard"];
+    public static void ApplyEligible(ProviderSettings provider, IReadOnlyList<ModelInfo> models)
+    {
+        Apply(provider, models);
+        if (!provider.FromCliToolApi)
+            return;
+        var discovered = models.Select(model => model.Id).Where(id => !string.IsNullOrWhiteSpace(id)).ToHashSet(StringComparer.Ordinal);
+        if (discovered.Count == 0)
+            return;
+        static bool Protected(ModelInfo model) => model.RatedByUser || model.Blocked || string.IsNullOrWhiteSpace(model.Id)
+            || model.PrimaryKinds.Length > 0 || model.ManualRoleKinds.Length > 0 || model.AccountAvailabilityVerified
+            || string.Equals(model.DiscoverySource, "User catalog", StringComparison.Ordinal);
+        provider.Models.RemoveAll(model => !Protected(model)
+            && (!discovered.Contains(model.Id) || NonChatModelTerms.Any(term => model.Id.Contains(term, StringComparison.OrdinalIgnoreCase))));
+    }
 }

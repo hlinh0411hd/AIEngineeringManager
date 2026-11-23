@@ -133,6 +133,24 @@ static class TelegramChecks
         Directory.CreateDirectory(folder);
         var config = new TelegramSettings { Enabled = true, AllowedChatId = 42 };
         TelegramSecrets.SetToken(config, Secret);
+        var mediaCalls = new FakeHandler((_, _) => Json("{\"ok\":true,\"result\":{\"message_id\":900}}"));
+        var mediaSender = new TelegramNotifier(folder, () => config, _ => { }, token => new(token, mediaCalls));
+        var mediaNotice = new StopNotice("media-task", StopNoticeKind.NeedsReview, "Result", "Make media", WorkState.NeedsReview)
+        {
+            Attachments = [new("image.png", [1, 2, 3]), new("clip.mp4", [4, 5, 6]), new("clip.webm", [7, 8])]
+        };
+        Require(mediaSender.NotifyAsync(mediaNotice).Result, "Media delivery failed");
+        Require(mediaCalls.Calls.Count == 4 && mediaCalls.Calls[1].Url.EndsWith("/sendPhoto")
+            && mediaCalls.Calls[2].Url.EndsWith("/sendVideo") && mediaCalls.Calls[3].Url.EndsWith("/sendDocument"), "Media method selection");
+        Require(mediaCalls.Calls[2].Body.Contains("clip.mp4") && mediaCalls.Calls[2].Body.Contains("reply_to_message_id")
+            && mediaSender.Messages.WorkIdFor(42, 900) == "media-task", "Media upload and reply routing");
+        var partialCalls = new FakeHandler((r, _) => r.RequestUri!.AbsolutePath.EndsWith("/sendVideo")
+            ? Json("{\"ok\":false,\"error_code\":500,\"description\":\"upload failed\"}", HttpStatusCode.InternalServerError)
+            : Json("{\"ok\":true,\"result\":{\"message_id\":901}}"));
+        var mediaErrors = new List<string>();
+        var partialSender = new TelegramNotifier(folder, () => config, mediaErrors.Add, token => new(token, partialCalls));
+        Require(!partialSender.NotifyAsync(mediaNotice).Result && partialCalls.Calls.Count == 4 && mediaErrors.Count == 1,
+            "Failed upload must report failure, continue other files and never resend summary");
         var messages = new List<string>();
         var ok = new FakeHandler((_, _) => Json("{\"ok\":true,\"result\":{\"message_id\":501}}"));
         var notifier = new TelegramNotifier(folder, () => config, messages.Add, token => new(token, ok));

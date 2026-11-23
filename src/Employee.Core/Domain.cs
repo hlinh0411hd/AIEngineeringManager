@@ -213,7 +213,16 @@ public sealed record WorkComment(string Text, List<WorkAttachment> Attachments, 
 public sealed class ProviderSettings
 {
     public string Id { get; set; } = "";
+    // Display name reported by the CLI Tool API; empty for built-in and manual providers.
+    public string DisplayName { get; set; } = "";
+    // True when this entry came from the CLI Tool agent list; it is re-created from the API.
+    public bool FromCliToolApi { get; set; }
     public string Executable { get; set; } = "";
+    public string[] ExternalArguments { get; set; } = [];
+    public string ExternalApiKeyEnvironmentVariable { get; set; } = "OPENAI_API_KEY";
+    public string ProtectedExternalApiKey { get; set; } = "";
+    public string ResponsesApiBaseUrl { get; set; } = "";
+    public string ProtectedResponsesApiKey { get; set; } = "";
     public bool Enabled { get; set; }
     // The user switched this CLI off (Settings > AI & Models or Provider settings): it gets no
     // requests, and detection must not turn it back on.
@@ -287,12 +296,20 @@ public sealed class ManagerSettings
     public int MaxOutputChars { get; set; } = 200_000;
     public int MaxContextChars { get; set; } = 40_000;
     public double LocalPassThreshold { get; set; } = 1.0;
-    // When off, no AI CLI is called: not for tasks, detection, model listing, planning or refinement.
-    // Local AI (Ollama) is not a CLI and stays available.
+    // When off, no external provider is called: not for tasks, detection, model listing, planning or refinement.
+    // Local AI (Ollama) stays available.
     public bool UseAiCli { get; set; } = true;
+    // Local CLI Tool (aihub) HTTP API that owns agent detection and model probing.
+    public string CliToolApiUrl { get; set; } = "http://127.0.0.1:4777";
+    public string ProtectedCliToolApiToken { get; set; } = "";
+    // Once the CLI Tool API has reconciled the provider list, it is the source of truth: removed
+    // agents stay removed instead of being re-seeded by older-build compatibility code.
+    public bool ProvidersManagedByCliToolApi { get; set; }
     public static bool IsCli(string? providerId) => providerId != null && providerId != "ollama";
 
-    public static readonly string[] DefaultProviderIds = ["codex", "claude", "copilot", "gemini", "opencode", "freebuff", "commandcode", "qoder", "antigravity", "ollama"];
+    public static readonly string[] DefaultProviderIds = ["codex", "claude", "copilot", "gemini", "opencode", "freebuff", "commandcode", "qoder", "antigravity", "custom-cli", "responses-api", "ollama"];
+    // Providers that always exist locally; every other entry is created from the CLI Tool API.
+    public static readonly string[] BuiltInProviderIds = ["custom-cli", "responses-api", "ollama"];
     public List<ProviderSettings> Providers { get; set; } = [..DefaultProviderIds.Select(id => new ProviderSettings { Id = id })];
     public TelegramSettings Telegram { get; set; } = new();
 }
@@ -314,7 +331,7 @@ public sealed record ProviderHealth(string Id, bool Installed, bool CanExecute, 
 {
     // A launcher exists but the real CLI behind it is not installed (Copilot Desktop shim).
     public bool StandaloneCliMissing { get; init; }
-    // Excluded by the "Use AI CLIs" setting; the CLI was not called.
+    // Excluded by the external-provider setting; no remote provider was called.
     public bool ExcludedBySetting { get; init; }
 }
 // Machine-readable reason a task or step is blocked. Logic reads this, never the reason text.

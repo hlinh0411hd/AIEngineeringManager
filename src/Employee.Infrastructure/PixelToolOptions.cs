@@ -12,9 +12,10 @@ public sealed record PixelToolChoices(IReadOnlyDictionary<string, int> CanvasMax
     public static PixelToolChoices For(ConnectedTool tool)
     {
         var o = PixelToolOptions.Read(tool);
-        var api = o.Providers?.GetValueOrDefault("api")?.Vendors?.ToDictionary(v => v.Key, v => (IReadOnlyList<string>)(v.Value.ImageModels ?? [])) ?? new Dictionary<string, IReadOnlyList<string>>();
+        var providerIds = o.Providers?.Where(p => p.Value.ValueKind == JsonValueKind.Object).Select(p => p.Key).ToArray() ?? [];
+        var api = o.Provider("api")?.Vendors?.ToDictionary(v => v.Key, v => (IReadOnlyList<string>)(v.Value.ImageModels ?? [])) ?? new Dictionary<string, IReadOnlyList<string>>();
         return new(o.ArtModes, o.Directions, o.Frames, o.Fps.Min, o.Fps.Max, o.CanvasMin, o.Defaults.ArtMode, o.Defaults.Direction, o.Defaults.Frames, o.Defaults.Fps, o.Defaults.OutputWidth, o.Defaults.OutputHeight,
-            o.Actions ?? ["animation", "create", "edit", "direction", "skin"], o.Procedural ?? [], o.ExportScales ?? [1], o.AutoArtMode, api, o.Providers?.Keys.ToArray() ?? ["codex"]);
+            o.Actions ?? ["animation", "create", "edit", "direction", "skin"], o.Procedural ?? [], o.ExportScales ?? [1], o.AutoArtMode, api, providerIds.Length == 0 ? ["codex"] : providerIds);
     }
 }
 
@@ -28,7 +29,13 @@ internal sealed record PixelToolOptions(
     public string[]? Procedural { get; init; }
     public int[]? ExportScales { get; init; }
     public bool AutoArtMode { get; init; }
-    public Dictionary<string, ProviderInfo>? Providers { get; init; }
+    // Provider entries are read as raw JSON: newer capability files also put free-text notes in
+    // this map (for example "agentList": "..."), and only object entries are real providers.
+    public Dictionary<string, JsonElement>? Providers { get; init; }
+    public ProviderInfo? Provider(string id) =>
+        Providers != null && Providers.TryGetValue(id, out var value) && value.ValueKind == JsonValueKind.Object
+            ? value.Deserialize<ProviderInfo>(JsonSerializerOptions.Web)
+            : null;
     internal sealed record ProviderInfo(string? Label, Dictionary<string, VendorInfo>? Vendors);
     internal sealed record VendorInfo(string[]? ImageModels);
     internal sealed record Range(int Min, int Max);
@@ -49,7 +56,15 @@ internal sealed record PixelToolOptions(
         if (file.Length > 16_384 || (file.Attributes & FileAttributes.ReparsePoint) != 0)
             throw new InvalidOperationException("Pixel Art capability file is oversized or redirected.");
 
-        var options = JsonSerializer.Deserialize<PixelToolOptions>(File.ReadAllText(file.FullName), JsonSerializerOptions.Web);
+        PixelToolOptions? options;
+        try
+        {
+            options = JsonSerializer.Deserialize<PixelToolOptions>(File.ReadAllText(file.FullName), JsonSerializerOptions.Web);
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException("Pixel Art published an invalid or unsupported capability file.", ex);
+        }
         if (options == null || options.Version != 1 || options.CanvasMin is < 1 or > 1024 ||
             options.ArtModes == null || options.ArtModes.Count == 0 || options.ArtModes.Any(mode => mode.Value < options.CanvasMin || mode.Value > 4096) ||
             options.Directions == null || options.Frames == null || options.Fps == null || options.Defaults == null ||

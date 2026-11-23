@@ -23,6 +23,8 @@ static class Harness
 
     public static async Task Check(string name, Func<Task> test)
     {
+        if (args.FirstOrDefault() == "--only" && (args.Length < 2 || !name.Contains(args[1], StringComparison.OrdinalIgnoreCase)))
+            return;
         if (args.FirstOrDefault() == "--provider-resume" && !name.StartsWith("Provider resume:"))
             return;
         try

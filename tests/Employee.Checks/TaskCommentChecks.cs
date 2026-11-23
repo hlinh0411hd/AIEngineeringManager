@@ -48,6 +48,35 @@ static class TaskCommentChecks
         var response = store.WorkItems().Single(w => w.Id == goal.Id).Comments.Single();
         Assert(response.IsAssistant && response.SourceWorkId == step.Id && response.ExecutionSequence != null);
         Assert(response.Text.Contains("Updated the button.") && !response.Text.Contains("item.completed"));
+        var conciseTool = ToolResultComment.Build("{\"status\":\"completed\"}", new string('x', 500));
+        Assert(conciseTool != null && conciseTool.Value.Text.Contains("completed") && !conciseTool.Value.Text.Contains(new string('x', 100)));
+        var imagePath = Path.Combine(folder, "result.png");
+        var videoPath = Path.Combine(folder, "result.mp4");
+        File.WriteAllBytes(imagePath, [1, 2, 3]);
+        File.WriteAllBytes(videoPath, [4, 5, 6]);
+        var media = TaskResultMedia.FromOutput($"![Image]({imagePath})\n[Video](result.mp4)\nFile: {videoPath}\n[Outside](../outside.png)", folder);
+        Assert(media.Count == 2 && media.Any(a => a.Name == "result.mp4"));
+        File.WriteAllBytes(Path.Combine(folder, "song.mp3"), [7]);
+        File.WriteAllBytes(Path.Combine(folder, "report.docx"), [8]);
+        File.WriteAllBytes(Path.Combine(folder, "run.exe"), [9]);
+        var anyFiles = TaskResultMedia.FromOutput("[Song](song.mp3)\n[Doc](report.docx)\n[Bad](run.exe)", folder);
+        Assert(anyFiles.Count == 2 && anyFiles.All(a => a.Name != "run.exe"));
+        var toolMedia = ToolResultComment.Build(System.Text.Json.JsonSerializer.Serialize(new { status = "completed", outputPath = videoPath }), "video")!.Value;
+        Assert(toolMedia.Attachments.Single().Name == "result.mp4");
+        var mediaWork = new WorkItem { ProjectId = "p" };
+        mediaWork.Comments.Add(new("Old", media, DateTimeOffset.UtcNow.AddMinutes(-2)) { IsAssistant = true });
+        mediaWork.Comments.Add(new("New request", [], DateTimeOffset.UtcNow.AddMinutes(-1)));
+        mediaWork.Comments.Add(new("Result", media, DateTimeOffset.UtcNow) { IsAssistant = true });
+        mediaWork.Comments.Add(new("Duplicate", media, DateTimeOffset.UtcNow) { IsAssistant = true });
+        Assert(TaskResultMedia.ForNotice(mediaWork).Count == 2);
+        var largeResult = new WorkItem();
+        largeResult.Comments.Add(new("Video", [new("large.mp4", new byte[TaskAttachments.MaxFileBytes + 1])], DateTimeOffset.UtcNow) { IsAssistant = true });
+        TaskAttachments.Validate(TaskAttachments.InputFiles(largeResult));
+        Assert(TaskAttachments.Files(largeResult).Single().Content.Length > TaskAttachments.MaxFileBytes);
+        store.SaveWork(mediaWork);
+        using (var mediaStore = new SqliteStore(Path.Combine(folder, "checks.db")))
+            Assert(mediaStore.WorkItems().Single(w => w.Id == mediaWork.Id).Comments.Last().Attachments.Last().Content.SequenceEqual(new byte[] { 4, 5, 6 }));
+        Assert(TaskSummary.Build(store.WorkItems().Single(w => w.Id == goal.Id), [], null, [], true).Contains("Updated the button."));
         using (var reopened = new SqliteStore(Path.Combine(folder, "checks.db")))
             Assert(reopened.WorkItems().Single(w => w.Id == goal.Id).Comments.Single().IsAssistant);
         var saved = flow.AddComment(goal, "Change the button colour", [], true);

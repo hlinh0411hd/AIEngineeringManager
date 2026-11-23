@@ -13,6 +13,7 @@ public sealed record StopNotice(string WorkId, StopNoticeKind Kind, string Title
 
     // The user comment this run answers, if any, so the message can say what was done for it.
     public string LastComment { get; init; } = "";
+    public IReadOnlyList<WorkAttachment> Attachments { get; init; } = [];
 }
 
 public static class TaskStopNotices

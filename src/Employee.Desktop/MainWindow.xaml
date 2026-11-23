@@ -862,14 +862,62 @@
       <TabItem Header="AI &amp; Models" MinWidth="170" x:Name="SettingsAISection">
        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="20" MaxWidth="1150" HorizontalAlignment="Stretch">
-         <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#B8B0CF" Margin="0,8,0,8" x:Name="ModelDiscoveryNote" />
-         <TextBlock Text="AI CLIs" Margin="0,18,0,0" FontSize="22" FontWeight="SemiBold" />
-         <TextBlock Text="Choose whether tasks may call installed AI command-line tools (Codex, Claude, Copilot, Gemini, OpenCode, Freebuff, CommandCode, Qoder, Antigravity). When off, no CLI is started: not for tasks, detection, model listing, plan drafts or request refinement. Local AI (Ollama) is not a CLI and stays available. The choice applies immediately." TextWrapping="Wrap" Margin="0,10,0,8" />
-         <RadioButton x:Name="UseCliChoice" Content="Use AI CLIs" GroupName="CliMode" Margin="0,4" Checked="CliModeChanged" Unchecked="CliModeChanged" />
-         <RadioButton x:Name="NoCliChoice" Content="Do not use AI CLIs" GroupName="CliMode" Margin="0,4" />
-         <TextBlock Text="Each CLI" Margin="0,14,0,0" FontSize="16" FontWeight="SemiBold" />
-         <TextBlock Text="Tick a CLI to let tasks use it; untick it and it gets no requests. Changes apply immediately, and Detect never turns an unticked CLI back on." TextWrapping="Wrap" Foreground="#B8B0CF" Margin="0,4,0,6" />
-         <StackPanel x:Name="CliToggles" Margin="0,0,0,6" />
+         <TextBlock Text="AI agents" Margin="0,8,0,0" FontSize="22" FontWeight="SemiBold" />
+         <TextBlock Text="Agents, models and versions come from the local CLI Tool API (aihub); this app no longer scans installed CLIs itself. Tick Use to let tasks send requests to an agent. Click a row for its models, usage and permissions. Each agent lists every model its account can actually run." TextWrapping="Wrap" Margin="0,8,0,10" />
+         <WrapPanel>
+          <RadioButton x:Name="UseCliChoice" Content="Use external AI providers" GroupName="CliMode" Margin="0,4" Checked="CliModeChanged" Unchecked="CliModeChanged" />
+          <RadioButton x:Name="NoCliChoice" Content="Do not use external AI providers" GroupName="CliMode" Margin="0,4" />
+         </WrapPanel>
+         <WrapPanel Margin="0,10,0,4">
+          <Button Content="Detect agents &amp; models" Click="DetectProviders" Background="#7545D6" Foreground="White" />
+          <Button Content="Enable usable agents" Click="EnableAvailableProviders" />
+          <TextBlock Text="Detection asks the CLI Tool API only; no inference is run." Foreground="#B8B0CF" VerticalAlignment="Center" Margin="8,0,0,8" />
+         </WrapPanel>
+         <TextBlock x:Name="CliToolApiStatus" TextWrapping="Wrap" Foreground="#B8B0CF" Margin="0,2,0,8" />
+         <DataGrid x:Name="ProviderAgentsGrid" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" HeadersVisibility="Column" PreviewMouseLeftButtonUp="ProviderAgentRowClicked" Height="330" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+          <DataGrid.Columns>
+           <DataGridTemplateColumn Header="Use" Width="55">
+            <DataGridTemplateColumn.CellTemplate>
+             <DataTemplate>
+              <CheckBox IsChecked="{Binding Enabled, Mode=OneWay}" Click="AgentEnabledClicked" Margin="0" HorizontalAlignment="Center" VerticalAlignment="Center" ToolTip="Tick to let tasks use this agent" />
+             </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+           </DataGridTemplateColumn>
+           <DataGridTextColumn Header="Agent" Binding="{Binding Name}" Width="*" />
+           <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="180" />
+           <DataGridTextColumn Header="Models" Binding="{Binding Models}" Width="105" />
+           <DataGridTextColumn Header="Usage" Binding="{Binding Usage}" Width="115" />
+           <DataGridTextColumn Header="Runs today" Binding="{Binding Runs}" Width="90" />
+           <DataGridTextColumn Header="Auth" Binding="{Binding Auth}" Width="100" />
+           <DataGridTemplateColumn Header="" Width="120">
+            <DataGridTemplateColumn.CellTemplate>
+             <DataTemplate>
+              <Button Content="Details…" Click="AgentDetailsClicked" Padding="8,2" Margin="4,0" MinHeight="0" VerticalAlignment="Center" HorizontalAlignment="Left" />
+             </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+           </DataGridTemplateColumn>
+          </DataGrid.Columns>
+         </DataGrid>
+         <TextBlock Text="Click a row (or Details) for the model list, usage, rating and permission settings. Changes there apply immediately." Foreground="#B8B0CF" Margin="0,4,0,12" />
+         <Expander Header="CLI Tool API connection" IsExpanded="False">
+          <StackPanel Margin="0,8,0,4">
+           <TextBlock Text="The aihub address that detects agents and probes models. Plain http is accepted only for this computer; use https for another host. The token is protected when saved." TextWrapping="Wrap" Foreground="#B8B0CF" Margin="0,0,0,6" />
+           <WrapPanel>
+            <StackPanel>
+             <TextBlock Text="API address" />
+             <TextBox x:Name="CliToolApiUrl" Width="300" ToolTip="Example: http://127.0.0.1:4777. Plain http is accepted only for this computer; use https for another host." />
+            </StackPanel>
+            <StackPanel Margin="10,0,0,0">
+             <TextBlock Text="API token (optional, protected when saved)" />
+             <PasswordBox x:Name="CliToolApiToken" Width="260" />
+            </StackPanel>
+            <CheckBox x:Name="ClearCliToolApiToken" Content="Clear saved token" VerticalAlignment="Bottom" Margin="10,0,0,8" />
+            <Button Content="Save CLI Tool API" Click="SaveCliToolApi" VerticalAlignment="Bottom" Margin="10,0,0,8" />
+           </WrapPanel>
+          </StackPanel>
+         </Expander>
+         <Expander x:Name="AdvancedAiSettings" Header="Advanced: routing, ratings, provider options and model catalog" IsExpanded="False">
+          <StackPanel Margin="0,8,0,4">
          <TextBlock Text="Deterministic orchestration" Margin="0,18,0,0" FontSize="22" FontWeight="SemiBold" />
          <TextBlock Text="Automatic routes and falls back between allowed models. SemiAutomatic proposes and waits for approval. Manual requires your selection. No paid API fallback is added by the manager." TextWrapping="Wrap" Margin="0,10,0,20" />
          <WrapPanel>
@@ -930,13 +978,8 @@
            <DataGridTextColumn Header="Learned offset" Binding="{Binding LearnedOffset,StringFormat=+0.0;-0.0;0}" Width="105" />
           </DataGrid.Columns>
          </DataGrid>
-         <TextBlock Text="Permissions" FontSize="19" FontWeight="SemiBold" Margin="0,20,0,8" />
-         <TextBlock Text="Providers start disabled. Enable a provider, add a permitted model and choose task access before running. TextOnly providers cannot use project tools. Codex uses a read-only or workspace-write sandbox; CLI safety setup must work. Project access is not a confidentiality boundary: review provider configuration and project content. Phase 1 never grants full-access flags." TextWrapping="Wrap" />
-         <WrapPanel>
-          <Button Content="Enable usable installed AI" Click="EnableAvailableProviders" />
-          <Button Content="Detect CLI &amp; refresh model catalog" Click="DetectProviders" Background="#7545D6" Foreground="White" />
-          <TextBlock Text="No AI calls for detection. Authentication and quota remain Unknown when unavailable." Foreground="#B8B0CF" VerticalAlignment="Center" Margin="5,0,0,8" />
-         </WrapPanel>
+         <TextBlock Text="Provider permissions, path and optional connection details" FontSize="19" FontWeight="SemiBold" Margin="0,20,0,8" />
+         <TextBlock Text="Providers start disabled. Enable a provider, keep at least one permitted model and choose task access before running. TextOnly providers cannot use project tools. Codex uses a read-only or workspace-write sandbox; CLI safety setup must work. Project access is not a confidentiality boundary: review provider configuration and project content. Phase 1 never grants full-access flags." TextWrapping="Wrap" />
          <Grid Margin="0,15,0,0">
           <Grid.ColumnDefinitions>
            <ColumnDefinition Width="150" />
@@ -948,8 +991,8 @@
            <ComboBox x:Name="ProviderChoice" SelectionChanged="ProviderSelected" />
           </StackPanel>
           <StackPanel Grid.Column="1">
-           <TextBlock Text="Executable path (empty = PATH)" />
-           <TextBox x:Name="ProviderExe" />
+           <TextBlock x:Name="ProviderExeLabel" Text="Executable path (empty = PATH)" />
+           <TextBox x:Name="ProviderExe" ToolTip="For Responses API, enter the API root URL, such as https://codex.fosta.app/v1. The app adds /responses." />
           </StackPanel>
           <StackPanel Grid.Column="2">
            <TextBlock Text="Priority (0-100, higher runs first)" />
@@ -961,6 +1004,35 @@
           <CheckBox x:Name="ProviderWrite" Content="Allow project writes (sandbox / reviewed proposals)" />
           <Button Content="Save provider" Click="SaveProvider" />
          </WrapPanel>
+          <StackPanel x:Name="CustomCliSettingsPanel" Visibility="Collapsed" Margin="0,8,0,8">
+           <TextBlock Text="Custom CLI agent — configure a headless command that reads the prompt from stdin, or include {prompt} in an argument. {model} is replaced with the selected model ID. Detection does not start the executable. Only TextOnly tasks are routed here; the manager does not provide a project path or project files. The process still runs with this Windows account's permissions, so use an agent you trust." TextWrapping="Wrap" Margin="0,4,0,8" />
+           <TextBlock Text="Arguments (JSON string array)" />
+           <TextBox x:Name="ProviderArguments" Text="[]" />
+           <WrapPanel Margin="0,6,0,0">
+            <StackPanel>
+             <TextBlock Text="API-key environment variable" />
+             <TextBox x:Name="ProviderApiKeyVariable" Text="OPENAI_API_KEY" Width="220" ToolTip="Supported: OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, OPENROUTER_API_KEY, AZURE_OPENAI_API_KEY, DEEPSEEK_API_KEY, MISTRAL_API_KEY, XAI_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, FIREWORKS_API_KEY" />
+            </StackPanel>
+            <StackPanel Margin="8,0,0,0">
+             <TextBlock Text="API key (protected when saved; optional)" />
+             <PasswordBox x:Name="ProviderApiKey" Width="300" />
+            </StackPanel>
+            <CheckBox x:Name="ClearProviderApiKey" Content="Clear saved key" VerticalAlignment="Bottom" Margin="8,0,0,8" />
+           </WrapPanel>
+           <TextBlock x:Name="ProviderApiKeyStatus" TextWrapping="Wrap" Foreground="#B8B0CF" Margin="0,4,0,0" />
+          </StackPanel>
+          <StackPanel x:Name="ResponsesApiSettingsPanel" Visibility="Collapsed" Margin="0,8,0,8">
+           <TextBlock Text="OpenAI-compatible Responses API. Enter the API root in Base URL (for example https://codex.fosta.app/v1); the app appends /responses and checks /models without making an inference call. Add an exact model ID if the service does not provide a /models list. API key is protected with Windows DPAPI." TextWrapping="Wrap" Margin="0,4,0,8" />
+           <WrapPanel>
+            <StackPanel>
+             <TextBlock Text="API key (protected when saved)" />
+             <PasswordBox x:Name="ResponsesApiKey" Width="300" />
+            </StackPanel>
+            <CheckBox x:Name="ClearResponsesApiKey" Content="Clear saved key" VerticalAlignment="Bottom" Margin="8,0,0,8" />
+           </WrapPanel>
+           <TextBlock x:Name="ResponsesApiKeyStatus" TextWrapping="Wrap" Foreground="#B8B0CF" Margin="0,4,0,0" />
+          </StackPanel>
+         <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#B8B0CF" Margin="0,8,0,8" x:Name="ModelDiscoveryNote" />
          <Grid>
           <Grid.RowDefinitions>
            <RowDefinition Height="Auto" />
@@ -968,9 +1040,9 @@
            <RowDefinition Height="Auto" />
            <RowDefinition Height="*" />
           </Grid.RowDefinitions>
-          <TextBlock Text="Model catalog: read from CLI help, cache or a supported list command. Each model's source is shown below; being in the catalog does not guarantee your account can use it. A blank ID uses the CLI default." TextWrapping="Wrap" Foreground="#B8B0CF" />
+          <TextBlock Text="Model catalog: read from provider metadata or entered manually. Each model's source is shown below; being in the catalog does not guarantee your account can use it. A blank ID uses the CLI default; Responses API requires an exact model ID." TextWrapping="Wrap" Foreground="#B8B0CF" />
           <WrapPanel Grid.Row="1" Margin="0,8,0,0">
-           <TextBox x:Name="NewModel" Width="230" ToolTip="Exact model ID, or empty for CLI default" />
+           <TextBox x:Name="NewModel" Width="230" ToolTip="Exact model ID, or empty for CLI default (not for Responses API)" />
            <ComboBox x:Name="ModelKind" />
            <CheckBox x:Name="ModelPrimaryRole" Content="Primary for selected task type" ToolTip="Unchecked assigns this model as a backup for the selected task type." />
            <Button Content="Save model role for task type" Click="AddModel" />
@@ -997,6 +1069,8 @@
            </DataGrid.Columns>
           </DataGrid>
          </Grid>
+          </StackPanel>
+         </Expander>
         </StackPanel>
        </ScrollViewer>
       </TabItem>
@@ -1132,14 +1206,14 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto">
      <StackPanel Margin="22" MaxWidth="900" HorizontalAlignment="Left">
       <TextBlock Text="Quick start guide" FontSize="25" FontWeight="SemiBold" />
-      <TextBlock Text="Three basic steps: add an AI CLI, add a project, then run a task." Foreground="#B8B0CF" TextWrapping="Wrap" Margin="0,4,0,18" />
+      <TextBlock Text="Three basic steps: add an external AI provider, add a project, then run a task." Foreground="#B8B0CF" TextWrapping="Wrap" Margin="0,4,0,18" />
 
       <Border Background="#1B1833" BorderBrush="#3B344F" BorderThickness="1" CornerRadius="16" Padding="20" Margin="0,0,0,18">
        <StackPanel>
         <TextBlock Text="1. How to add a CLI" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
         <TextBlock Foreground="#B8B0CF" TextWrapping="Wrap" LineHeight="22">
          <Run Text="a) Install and sign in to the CLI yourself (Claude Code, Copilot CLI, Codex, Gemini CLI, OpenCode, Freebuff or Ollama)." /><LineBreak />
-         <Run Text="b) Open Providers &amp; Models and click &quot;Detect CLI &amp; refresh model catalog&quot;. Every CLI found is added and enabled with full permissions (Ollama answers only, it never edits files)." /><LineBreak />
+         <Run Text="b) Open Providers &amp; Models and click &quot;Detect providers &amp; refresh model catalog&quot;. Available external providers are detected; Ollama answers only and never edits files." /><LineBreak />
          <Run Text="c) Optional: under Provider settings set an Executable path for a CLI that is not on PATH, change Priority (higher runs first) or untick a permission, then click &quot;Save provider&quot;." />
         </TextBlock>
         <Button Content="Open Providers &amp; Models" Click="ShellNavigate" Tag="providers" HorizontalAlignment="Left" Margin="0,12,0,0" />

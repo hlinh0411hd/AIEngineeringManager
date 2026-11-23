@@ -10,6 +10,13 @@ public sealed partial class SqliteStore
             Execute("INSERT OR IGNORE INTO reported_usage VALUES($id,$input,$output,$cached)", ("$id", r.Id), ("$input", usage.Input), ("$output", usage.Output), ("$cached", usage.CachedInput));
     }
 
+    public IReadOnlyDictionary<string, int> ProviderRunsToday()
+    {
+        var since = new DateTimeOffset(DateTime.Today, TimeZoneInfo.Local.GetUtcOffset(DateTime.Today)).ToUniversalTime();
+        return Read("SELECT provider,count(*) FROM model_runs WHERE at>=$since GROUP BY provider", r => (r.GetString(0), r.GetInt32(1)), ("$since", since.ToString("O")))
+            .ToDictionary(pair => pair.Item1, pair => pair.Item2, StringComparer.OrdinalIgnoreCase);
+    }
+
     public IReadOnlyList<ModelPerformance> ModelPerformance() => Cached(ref performanceCache, () => Read("""
         SELECT r.provider,r.model,r.kind,count(*),
             sum(CASE WHEN r.failure=0 THEN 1 ELSE 0 END),
