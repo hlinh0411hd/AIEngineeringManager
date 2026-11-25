@@ -6,6 +6,8 @@ using Employee.Core;
 namespace Employee.Infrastructure;
 public sealed class Orchestrator(IEmployeeStore store, IReadOnlyList<IAIProvider> providers, IProcessRunner runner)
 {
+    // A step set aside for its tool's quota reset is retried at most this many times in all.
+    private const int MaxCapacityWaits = 10;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> projectLocks = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, CancellationTokenSource> running = new();
     private readonly SemaphoreSlim localModelSlot = new(1, 1);
@@ -228,6 +230,25 @@ public sealed class Orchestrator(IEmployeeStore store, IReadOnlyList<IAIProvider
                         continue;
                     }
 
+                    // The tool is out of quota or capacity for now (it reports the reset time itself). Nothing is
+                    // wrong with the step, so wait for the reset and run it again, instead of stopping it for review.
+                    // The step is set aside with its reset time: the session runs its other steps meanwhile and
+                    // requeues this one once the reset has passed (see SessionEngine).
+                    if (!work.IsCoordinator && StepStatus.Blocker(result.Output) is { } capacity && ProviderCooldown.IsCapacityBlock(capacity)
+                        && work.ProviderWaits < MaxCapacityWaits)
+                    {
+                        var resetAt = ProviderCooldown.RetryAt(FailureKind.RateLimit, capacity, DateTimeOffset.Now);
+                        work.Attempts--;
+                        work.ProviderWaits++;
+                        work.State = WorkState.WaitingForProvider;
+                        work.ScheduledAt = resetAt;
+                        work.BlockReason = $"Waiting for the AI tool's quota to reset (about {resetAt.ToLocalTime():yyyy-MM-dd HH:mm}). The step runs again then. {capacity}";
+                        work.Notes = work.BlockReason;
+                        store.Log(work.Id, "CapacityWait", JsonSerializer.Serialize(new { Provider = route.ProviderId, Model = DisplayModel(route.ModelId), ResetAt = resetAt, Reason = capacity }));
+                        store.SaveWork(work);
+                        break;
+                    }
+
                     CompleteSuccess(work, route, result);
                     // Blocked on something only the user or the manager can provide: never re-run it.
                     if (!work.IsCoordinator && StepStatus.Blocker(result.Output) is { } blocker && work.State == WorkState.NeedsReview)
@@ -264,6 +285,7 @@ public sealed class Orchestrator(IEmployeeStore store, IReadOnlyList<IAIProvider
                 if (result.Failure is FailureKind.InputTooLarge or FailureKind.LaunchFailed)
                 {
                     work.Attempts--;
+                    // Not model-specific: every model of this agent would fail the same way, so skip the agent.
                     excluded.Add(route.ProviderId);
                     choice = null;
                     approved = false;
@@ -295,7 +317,13 @@ public sealed class Orchestrator(IEmployeeStore store, IReadOnlyList<IAIProvider
                         break;
                     }
 
-                    var other = router.Choose(work, settings, health, store.Evaluations(), excluded);
+                    // Exhaust every model in the current agent before allowing routing to move to
+                    // another agent. The explicit auto-model preference scopes this lookup to the
+                    // current provider while still letting the router choose its next model.
+                    var other = router.Choose(work, settings, health, store.Evaluations(), excluded,
+                        new Route(route.ProviderId, "", "Fallback within the current agent", AutoModel: true));
+                    if (other == null)
+                        other = router.Choose(work, settings, health, store.Evaluations(), excluded);
                     if (other == null && !redetected)
                     {
                         (health, redetected) = (await DetectAsync(settings, token), true);
@@ -333,7 +361,15 @@ public sealed class Orchestrator(IEmployeeStore store, IReadOnlyList<IAIProvider
                     break;
                 }
 
-                excluded.Add(modelFailure ? routeKey : route.ProviderId);
+                // A failed route is always excluded first, but the provider itself is kept eligible
+                // until all of its models have been tried. This makes fallback agent-local first:
+                // A/model-1 -> A/model-2 -> ... -> B/model-1.
+                excluded.Add(routeKey);
+                // Quota, sign-in and outage errors are about the whole AI: its other models fail the same way, so
+                // it is left out at once and the next AI is tried, the one the user asked for first.
+                var wholeAi = !modelFailure && result.Failure is FailureKind.RateLimit or FailureKind.Authentication or FailureKind.Unavailable;
+                if (wholeAi)
+                    excluded.Add(route.ProviderId);
                 if (codexOnly && EditsDirectly(route.ProviderId) && !settings.Providers.Any(p => EditsDirectly(p.Id) && p.Id != route.ProviderId && Usable(p.Id)) && !modelFailure)
                 {
                     foreach (var provider in settings.Providers.Where(p => !EditsDirectly(p.Id)))
@@ -343,14 +379,29 @@ public sealed class Orchestrator(IEmployeeStore store, IReadOnlyList<IAIProvider
                 }
                 choice = null;
                 approved = false;
-                var next = router.Choose(work, settings, health, store.Evaluations(), excluded);
+                var asked = wholeAi && work.PreferredRoute is { } askedRoute && !work.RouteIsAdvisory && askedRoute.Reason.StartsWith(ProviderRequest.ReasonPrefix, StringComparison.Ordinal) ? askedRoute : null;
+                var next = router.Choose(work, settings, health, store.Evaluations(), excluded,
+                    asked ?? new Route(route.ProviderId, "", "Fallback within the current agent", AutoModel: true));
+                if (next == null)
+                {
+                    // Only now is the current agent exhausted. Provider-level failures (quota,
+                    // authentication, outage) therefore do not skip its remaining models.
+                    excluded.Add(route.ProviderId);
+                    next = router.Choose(work, settings, health, store.Evaluations(), excluded);
+                }
                 // The provider list the run started with can be stale (an AI that was not detected
                 // then, or detection that timed out): look again once before giving up, so the
                 // fallback goes through every usable AI before the list is called empty.
                 if (next == null && !redetected)
                 {
                     (health, redetected) = (await DetectAsync(settings, token), true);
-                    next = router.Choose(work, settings, health, store.Evaluations(), excluded);
+                    next = router.Choose(work, settings, health, store.Evaluations(), excluded,
+                        new Route(route.ProviderId, "", "Fallback within the current agent", AutoModel: true));
+                    if (next == null)
+                    {
+                        excluded.Add(route.ProviderId);
+                        next = router.Choose(work, settings, health, store.Evaluations(), excluded);
+                    }
                     store.Log(work.Id, "ProvidersRedetected", next == null ? "Checked the AI list again before falling back: no other usable AI." : "Checked the AI list again before falling back: " + next.ProviderId + " is usable.");
                 }
                 if (next == null)
@@ -656,7 +707,20 @@ public sealed class Orchestrator(IEmployeeStore store, IReadOnlyList<IAIProvider
         }
 
         if (w.DelegationAllowed)
-            rules += "If another permitted model is genuinely better for unfinished work, you may propose delegation by returning ONLY JSON {\"delegation\":{\"providerId\":\"...\",\"modelId\":\"exact ID or empty for configured default\",\"reason\":\"why\",\"request\":\"remaining work\"}}. Do not call any other AI directly. The C# manager checks budgets, permissions, depth and route cycles. Available catalog (not permission to exceed task scope): " + JsonSerializer.Serialize(store.LoadSettings().Providers.Where(p => p.Enabled).Select(p => new { p.Id, p.Models })) + "\n";
+        {
+            var catalog = store.LoadSettings().Providers.Where(pr => pr.Enabled).Select(pr => new
+            {
+                pr.Id,
+                Models = pr.Models
+                    .Where(m => !m.Blocked && (m.Kinds.Length == 0 || m.Kinds.Contains(w.Kind) || (w.Kind == WorkKind.Review && m.Kinds.Contains(WorkKind.Coding))))
+                    .OrderByDescending(m => m.Quality)
+                    .Select(m => m.Id)
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Take(8)
+                    .ToArray()
+            });
+            rules += "If another permitted model is genuinely better for unfinished work, you may propose delegation by returning ONLY JSON {\"delegation\":{\"providerId\":\"...\",\"modelId\":\"exact ID or empty for configured default\",\"reason\":\"why\",\"request\":\"remaining work\"}}. Do not call any other AI directly. The C# manager checks budgets, permissions, depth and route cycles. Available catalog (not permission to exceed task scope): " + JsonSerializer.Serialize(catalog) + "\n";
+        }
         if (Skills != null && store.LoadSettings().Automation.UseToolSkills && w.SkillId == null && !w.IsCoordinator && Skills.SelectForWork(w, p)is { } selected)
         {
             w.SkillId = selected.Id;

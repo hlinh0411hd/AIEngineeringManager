@@ -16,5 +16,6 @@
   <ItemGroup><Content Include="../../AIEmployeeGenerated/17cde09564374fc79afe821d8852a2fd-EA4B6E512C1F.png" Link="Assets/VirtualOffice/office-worker-walk-ne.png" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
   <ItemGroup><Content Include="../../AIEmployeeGenerated/a82c52fdaed846ae97663439146ba8a5-6772A1C72149.png" Link="Assets/VirtualOffice/office-worker-seated-typing-se.png" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
   <ItemGroup><Content Include="../../AIEmployeeGenerated/94b3b42f8a564b47aee1da722bbb498b-A5529CC1D41C.png" Link="Assets/VirtualOffice/office-worker-seated-sad-se.png" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><Content Include="../../AIEmployeeGenerated/a73f20b1bbf3417994d568ce3a1e5bbc-6730E788EDBE.png" Link="Assets/VirtualOffice/office-plant-se.png" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
   <ItemGroup><Content Include="../../.agents/skills/**/*" Link="skills/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
 </Project>

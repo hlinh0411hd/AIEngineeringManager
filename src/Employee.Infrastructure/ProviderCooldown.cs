@@ -18,6 +18,10 @@ public static partial class ProviderCooldown
     }
 
     public static bool ResetStated(string text) => Stated(text, DateTimeOffset.Now) != null;
+
+    // A tool that is out of image quota or capacity for now: the step waits for the reset instead of stopping for review.
+    public static bool IsCapacityBlock(string text) => !string.IsNullOrWhiteSpace(text)
+        && Regex.IsMatch(text, @"(?i)\b429\b|resourceexhausted|capacity exhausted|quota|usage limit|rate limit");
     private static DateTimeOffset Clamp(DateTimeOffset value, DateTimeOffset now) => value < now.AddMinutes(1) ? now.AddMinutes(1) : value > now.AddDays(7) ? now.AddDays(7) : value;
     private static DateTimeOffset? Stated(string text, DateTimeOffset now)
     {
@@ -77,9 +81,10 @@ public static partial class ProviderCooldown
     // "try again at 8:20 PM", and Claude Code's "resets 8:20pm" / "resets 8pm" (no "at").
     [GeneratedRegex(@"(?i)(?:try again|retry|resets?|available again)\s+(?:at\s+)?(?<at>\d{1,2}(?::\d{2})?\s*[ap]\.?m\.?|\d{1,2}:\d{2})(?![\d:])")]
     private static partial Regex ClockTime();
-    [GeneratedRegex(@"(?i)(?:try again|retry|resets?|available again|retry after)\s+(?:in|after)\s+(?<span>(?:\d+(?:\.\d+)?\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b[\s,and]*)+)")]
+    // "resets in ~3h15m": an optional "~", and units that touch the next number ("3h15m") still count.
+    [GeneratedRegex(@"(?i)(?:try again|retry|resets?|available again|retry after)\s+(?:in|after)\s+~?\s*(?<span>(?:\d+(?:\.\d+)?\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)(?![a-z])[\s,and]*)+)")]
     private static partial Regex Relative();
-    [GeneratedRegex(@"(?i)(?<n>\d+(?:\.\d+)?)\s*(?<unit>days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b")]
+    [GeneratedRegex(@"(?i)(?<n>\d+(?:\.\d+)?)\s*(?<unit>days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)(?![a-z])")]
     private static partial Regex Duration();
     [GeneratedRegex(@"(?i)retry-after:\s*(?<s>\d{1,6})")]
     private static partial Regex RetryAfterSeconds();

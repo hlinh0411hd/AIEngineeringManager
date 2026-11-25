@@ -136,12 +136,6 @@ public partial class MainWindow
 
     private void OpenSettingsSection(string section)
     {
-        if (section == "Testing")
-        {
-            NavigateShell("testing");
-            return;
-        }
-
         NavigateShell("settings");
         SettingsSections.SelectedItem = section switch
         {

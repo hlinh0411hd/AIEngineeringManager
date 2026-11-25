@@ -12,3 +12,5 @@ data-location.json.*.tmp
 # Build output and local tool settings
 Release/
 .qoder/
+
+.employee-prompts/

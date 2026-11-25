@@ -10,7 +10,7 @@ public sealed class CliProvider(string id, IProcessRunner runner) : IAIProvider,
     private static readonly HashSet<string> DetectedOnly = new(StringComparer.OrdinalIgnoreCase) { "freebuff", "commandcode" };
     // These CLIs can name the models this account may actually run; their own listing beats the
     // generic CLI Tool API probe, which reports catalog models without account eligibility.
-    private static readonly HashSet<string> AccountAwareCatalogs = new(StringComparer.OrdinalIgnoreCase) { "kilo", "clixad", "devin" };
+    private static readonly HashSet<string> AccountAwareCatalogs = new(StringComparer.OrdinalIgnoreCase) { "kilo", "clixad", "devin", "antigravity" };
     private static readonly HashSet<string> ReadOnlyProfiles = new(StringComparer.OrdinalIgnoreCase) { "clixad" };
     public static bool HasExecutionProfile(string value) => ExecutionProfiles.Contains(value);
     public static bool IsDetectedOnly(string value) => DetectedOnly.Contains(value);
@@ -49,6 +49,8 @@ public sealed class CliProvider(string id, IProcessRunner runner) : IAIProvider,
             : "CLI Tool API reported the agent as installed, but no launchable executable was resolved.";
         return ready;
     }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> CodexWriteProbeCache = new(StringComparer.OrdinalIgnoreCase);
 
     private string? executable;
     private string[] prefix = [];
@@ -409,9 +411,9 @@ public sealed class CliProvider(string id, IProcessRunner runner) : IAIProvider,
             },
             "antigravity" => request.Work.Access switch
             {
-                AccessLevel.WriteProject => ["--output-format", "text", "--mode", "accept-edits", "--sandbox", "--add-dir", request.Project.Root],
-                AccessLevel.ReadProject => ["--output-format", "text", "--mode", "plan", "--sandbox", "--add-dir", request.Project.Root],
-                _ => ["--output-format", "text", "--mode", "plan", "--sandbox"]
+                AccessLevel.WriteProject => ["--output-format", "text", "--mode", "accept-edits", "--dangerously-skip-permissions", "--sandbox", "--add-dir", request.Project.Root],
+                AccessLevel.ReadProject => ["--output-format", "text", "--mode", "plan", "--dangerously-skip-permissions", "--sandbox", "--add-dir", request.Project.Root],
+                _ => ["--output-format", "text", "--mode", "plan", "--dangerously-skip-permissions", "--sandbox"]
             },
             // An empty available-tools list leaves the model no tools at all; --deny-tool rejects "*"
             // and naming every builtin tool individually breaks across CLI versions. Silent mode
@@ -441,7 +443,7 @@ public sealed class CliProvider(string id, IProcessRunner runner) : IAIProvider,
                 : ["-p"],
             // Devin's -p/--print takes the prompt inline; the shared prompt tail must skip it.
             // in-process keeps the step out of the shared background daemon.
-            "devin" => ["--print", prompt, "--process-model", "in-process", "--permission-mode", request.Work.Access == AccessLevel.WriteProject ? "accept-edits" : "auto", "--respect-workspace-trust", "false", "--verbosity", "1"],
+            "devin" => ["--print", prompt, "--process-model", "in-process", "--permission-mode", request.Work.Access == AccessLevel.WriteProject ? "dangerous" : "auto", "--respect-workspace-trust", "false", "--verbosity", "1"],
             "freebuff" => throw new NotSupportedException("Freebuff CLI has no noninteractive execution mode; no arguments are constructed."),
             _ => throw new NotSupportedException(id)};
         // Research steps may look things up: Claude's built-in web search and fetch are added to the
@@ -493,11 +495,18 @@ public sealed class CliProvider(string id, IProcessRunner runner) : IAIProvider,
         return args;
     }
 
+    // Agents with project file tools that run in the project folder and can therefore read a prompt file.
+    public static bool PromptFileCapable(string id, AccessLevel access) =>
+        access != AccessLevel.TextOnly && id is "opencode" or "kilo" or "cline" or "antigravity" or "devin" or "clixad";
+
+    public static string PromptFilePointer(string path) =>
+        $"The complete task request is in the UTF-8 text file \"{path}\". Read that entire file first, then carry out exactly what it asks and reply in the format it requires. Do not ask questions.";
+
     public async Task<AgentResult> ExecuteAsync(ExecutionRequest request, Action<string> output, CancellationToken token)
     {
         if (!ready || executable == null)
             return new(FailureKind.Unavailable, "", "Detect provider capabilities first.");
-        var isolated = Id != "codex" && !(Id is "claude" or "qoder" or "antigravity" or "kilo" or "cline" or "devin" or "clixad" && request.Work.Access != AccessLevel.TextOnly);
+        var isolated = Id != "codex" && !(Id is "claude" or "qoder" or "antigravity" or "opencode" or "kilo" or "cline" or "devin" or "clixad" && request.Work.Access != AccessLevel.TextOnly);
         if (Id == "codex" && request.Work.Access == AccessLevel.TextOnly)
             return new(FailureKind.TaskError, "", "Codex requires ReadProject or WriteProject; its sandbox can read project files.");
         var windowsSandbox = Id == "codex" && OperatingSystem.IsWindows() ? CodexWindowsSettings.ReadCurrentMode() : null;
@@ -513,6 +522,7 @@ public sealed class CliProvider(string id, IProcessRunner runner) : IAIProvider,
         var helperDaemonRunning = false;
         var runStarted = false;
         string? clixadPreviousModel = null;
+        string? promptFile = null;
         var clixadModelSwitched = false;
         var streamFailure = FailureKind.None;
         var streamDetail = "";
@@ -535,20 +545,25 @@ public sealed class CliProvider(string id, IProcessRunner runner) : IAIProvider,
 
             if (Id == "codex" && request.Work.Access == AccessLevel.WriteProject && windowsSandbox != null)
             {
-                using var probeDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-                probeDeadline.CancelAfter(TimeSpan.FromSeconds(30));
-                ProcessResult probe;
-                try
+                var probeKey = Path.TrimEndingDirectorySeparator(Path.GetFullPath(request.Project.Root)) + "|" + windowsSandbox;
+                if (!CodexWriteProbeCache.TryGetValue(probeKey, out var verifiedAt) || DateTimeOffset.UtcNow - verifiedAt > TimeSpan.FromMinutes(5))
                 {
-                    probe = await Run(CodexWindowsSettings.WriteProbeArguments(request.Project.Root, windowsSandbox), request.Project.Root, null, 6000, null, probeDeadline.Token);
-                }
-                catch (OperationCanceledException)when (!token.IsCancellationRequested)
-                {
-                    return new(FailureKind.Permission, "", "Codex sandbox write check timed out. No AI call was made.");
-                }
+                    using var probeDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    probeDeadline.CancelAfter(TimeSpan.FromSeconds(30));
+                    ProcessResult probe;
+                    try
+                    {
+                        probe = await Run(CodexWindowsSettings.WriteProbeArguments(request.Project.Root, windowsSandbox), request.Project.Root, null, 6000, null, probeDeadline.Token);
+                    }
+                    catch (OperationCanceledException)when (!token.IsCancellationRequested)
+                    {
+                        return new(FailureKind.Permission, "", "Codex sandbox write check timed out. No AI call was made.");
+                    }
 
-                if (probe.ExitCode != 0 || !probe.Output.Contains("EMPLOYEE_PROJECT_WRITE_OK", StringComparison.Ordinal))
-                    return new(FailureKind.Permission, "", "Codex sandbox failed the project test file create/delete check. No AI call was made.\n" + probe.Output, probe.ExitCode);
+                    if (probe.ExitCode != 0 || !probe.Output.Contains("EMPLOYEE_PROJECT_WRITE_OK", StringComparison.Ordinal))
+                        return new(FailureKind.Permission, "", "Codex sandbox failed the project test file create/delete check. No AI call was made.\n" + probe.Output, probe.ExitCode);
+                    CodexWriteProbeCache[probeKey] = DateTimeOffset.UtcNow;
+                }
             }
 
             if (Id == "gemini")
@@ -560,7 +575,14 @@ public sealed class CliProvider(string id, IProcessRunner runner) : IAIProvider,
             var env = new Dictionary<string, string>();
             if (Id == "opencode")
             {
-                env["OPENCODE_PERMISSION"] = "{\"*\":\"deny\"}";
+                // Text-only steps get no tools. Project steps run in the project folder: reads are
+                // allowed, and edits/commands only for WriteProject.
+                env["OPENCODE_PERMISSION"] = request.Work.Access switch
+                {
+                    AccessLevel.WriteProject => "{\"*\":\"allow\"}",
+                    AccessLevel.ReadProject => "{\"*\":\"deny\",\"read\":\"allow\",\"glob\":\"allow\",\"grep\":\"allow\",\"list\":\"allow\"}",
+                    _ => "{\"*\":\"deny\"}"
+                };
                 env["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "true";
                 env["OPENCODE_DISABLE_LSP_DOWNLOAD"] = "true";
             }
@@ -595,6 +617,17 @@ public sealed class CliProvider(string id, IProcessRunner runner) : IAIProvider,
             }
 
             // These CLIs take the prompt as an argument; Windows refuses command lines over 32,767 chars.
+            // Agents that can read project files get the long prompt as a file and a short pointer instead.
+            if (Id is not ("codex" or "claude" or "qoder") && executable.Length + prefix.Concat(args).Sum(a => a.Length + 3) > 30000
+                && PromptFileCapable(Id, request.Work.Access))
+            {
+                var promptDirectory = Path.Combine(directory, ".employee-prompts");
+                Directory.CreateDirectory(promptDirectory);
+                promptFile = Path.Combine(promptDirectory, Guid.NewGuid().ToString("N") + ".md");
+                await File.WriteAllTextAsync(promptFile, prompt, new System.Text.UTF8Encoding(false), token);
+                args = Arguments(Id, request, PromptFilePointer(promptFile), policy, windowsSandbox);
+            }
+
             if (Id is not ("codex" or "claude" or "qoder") && executable.Length + prefix.Concat(args).Sum(a => a.Length + 3) > 30000)
                 return new(FailureKind.InputTooLarge, "", $"{Id} receives the prompt on the command line and this step's prompt ({prompt.Length:N0} chars) exceeds the Windows command-line limit. {Id} was not started; no usage was spent.");
             // opencode, kilo and cline keep the process alive after a provider error (for example a
@@ -712,6 +745,17 @@ public sealed class CliProvider(string id, IProcessRunner runner) : IAIProvider,
             // Only remove files we created; never recursively remove a provider workspace.
             if (policy != null && File.Exists(policy))
                 File.Delete(policy);
+            if (promptFile != null)
+                try
+                {
+                    File.Delete(promptFile);
+                    var promptDirectory = Path.GetDirectoryName(promptFile)!;
+                    if (Directory.Exists(promptDirectory) && !Directory.EnumerateFileSystemEntries(promptDirectory).Any())
+                        Directory.Delete(promptDirectory);
+                }
+                catch (IOException)
+                {
+                }
             foreach (var path in attachmentPaths)
                 try
                 {

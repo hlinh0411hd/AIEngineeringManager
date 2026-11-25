@@ -178,6 +178,16 @@ public sealed partial class SqliteStore : IEmployeeStore
             Execute("INSERT INTO work VALUES($id,$data) ON CONFLICT(id) DO UPDATE SET data=$data", ("$id", w.Id), ("$data", WorkJson(w, null)));
     }
 
+    public void DeleteWork(string id)
+    {
+        lock (gate)
+        {
+            Execute("DELETE FROM logs WHERE work_id=$id", ("$id", id));
+            Execute("DELETE FROM handoffs WHERE work_id=$id", ("$id", id));
+            Execute("DELETE FROM work WHERE id=$id", ("$id", id));
+        }
+    }
+
     public IReadOnlyList<WorkItem> WorkItems() => Read("SELECT data FROM work", DecodeWork).OrderByDescending(w => w.Priority).ThenBy(w => w.CreatedAt).ToList();
     public void Log(string workId, string eventName, string message) => Execute("INSERT INTO logs(work_id,at,event,message) VALUES($id,$at,$event,$message)", ("$id", workId), ("$at", DateTimeOffset.UtcNow.ToString("O")), ("$event", eventName), ("$message", message));
     public IReadOnlyList<TaskLog> Logs(string id) => Read("SELECT seq,work_id,at,event,message FROM logs WHERE work_id=$id ORDER BY seq", r => new TaskLog(r.GetInt64(0), r.GetString(1), DateTimeOffset.Parse(r.GetString(2)), r.GetString(3), r.GetString(4)), ("$id", id));

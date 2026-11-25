@@ -10,6 +10,39 @@ public static class MilestoneView
     public static int? Current(WorkSession session) =>
         session.Phases.Count == 0 ? null : AcceptanceCheck.OpenPhase(session) ?? session.Phases.Count - 1;
 
+    // A plan for a large task covers the open milestone only. Steps the planner wrote for a later milestone
+    // (its own "phase" number above the open one, or the plan's phase) are left out here and planned when
+    // that milestone is the open one, after the tester has accepted the milestones before it. A step that
+    // depends on a left-out step is left out too. Steps without a phase stay in the open milestone.
+    public static WorkPlan KeepOpenMilestone(WorkSession session, WorkPlan plan)
+    {
+        if (session.Phases.Count == 0 || plan.Tasks == null)
+            return plan;
+        var open = AcceptanceCheck.OpenPhase(session) ?? session.Phases.Count - 1;
+        // While the open milestone is being fixed after a failed test, a replan is for that milestone itself:
+        // its steps are not later milestones, so none are left out.
+        if (session.VerifyRounds > 0 && !session.AcceptedScopes.Contains("phase:" + open))
+            return plan;
+        var openNumber = open + 1;
+        bool Later(PlannedTask task) => (task.Phase ?? plan.Phase ?? openNumber) > openNumber;
+        var left = new HashSet<string>(plan.Tasks.Where(Later).Select(t => t.Key), StringComparer.Ordinal);
+        if (left.Count == 0)
+            return plan;
+        for (var changed = true; changed;)
+        {
+            changed = false;
+            foreach (var task in plan.Tasks)
+                if (!left.Contains(task.Key) && (task.DependsOn.Any(left.Contains) || (task.Tool?.InputFrom is { } from && left.Contains(from))))
+                {
+                    left.Add(task.Key);
+                    changed = true;
+                }
+        }
+        // A plan with nothing for the open milestone is kept as it is: it would leave the goal with no steps.
+        var kept = plan.Tasks.Where(t => !left.Contains(t.Key)).ToArray();
+        return kept.Length == 0 ? plan : plan with { Tasks = kept };
+    }
+
     // Steps carry their milestone; older steps (made before it was recorded) are placed by when their
     // milestone was accepted: a step made before milestone k passed belongs to the first such milestone.
     public static IReadOnlyDictionary<string, int> Assign(WorkSession session, IReadOnlyList<WorkItem> steps, IEnumerable<TaskLog> goalLogs)

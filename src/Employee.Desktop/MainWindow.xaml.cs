@@ -66,7 +66,6 @@ public partial class MainWindow : Window
         unified.WrapLegacySessions();
         unified.RecoverSavedTasks();
         testSettings = new(store, unified.Testing, () => closing || shuttingDown || updateReviewPending || controlCenter?.IsBusy == true || ((App)Application.Current).IsUpdateValidation || unified.IsBusy || detecting || evaluationCancel != null, () => SelectedTestTarget(), () => RefreshTasks());
-        TestSettingsHost.Content = testSettings;
         testSettings.SuiteRequested += (project, request) =>
         {
             OpenProjectTask(project.Id);
@@ -75,7 +74,7 @@ public partial class MainWindow : Window
             TaskAccess.SelectedItem = AccessLevel.ReadProject;
             TaskRequest.Text = request;
         };
-        unified.Changed += () => Dispatcher.InvokeAsync(() =>
+unified.Changed += () => Dispatcher.InvokeAsync(() =>
         {
             if (!closing)
                 RefreshTasks();
@@ -158,6 +157,42 @@ public partial class MainWindow : Window
         TaskDetail.ScrollToEnd();
     }
 
+    private async void ResetSelectedModelRating(object sender, RoutedEventArgs e)
+    {
+        await Guard(async () =>
+        {
+            IdleOnly();
+            var model = ModelGrid.SelectedItem as ModelInfo;
+            if (model == null || !model.RatedByUser)
+                return;
+            var providerId = ProviderChoice.SelectedItem as string ?? "";
+            var p = settings.Providers.Single(p => p.Id == providerId);
+            var index = p.Models.IndexOf(model);
+            var effectiveQuality = model.EffectiveQuality;
+            var effectiveCostRank = model.EffectiveCostRank;
+            p.Models[index] = model with
+            {
+                Quality = effectiveQuality,
+                CostRank = effectiveCostRank,
+                RatedByUser = false
+            };
+            store.SaveSettings(settings);
+            ModelCatalogMerge.AssignAutomaticRoles(settings, health, store);
+            store.SaveSettings(settings);
+            LoadProvider();
+            RefreshAgentsGrid();
+            RefreshRoutes();
+            UpdateWebRatingsBanner(ModelRatings.ActiveSource);
+            Status.Text = "Model rating reset to automatic (web/built-in).";
+        });
+    }
+
+    private void ModelGridLoadingRow(object? sender, DataGridRowEventArgs e)
+    {
+        if (e.Row.Item is ModelInfo model)
+            e.Row.ToolTip = ModelRatings.DescribeCapabilities(ProviderChoice.SelectedItem as string, model);
+    }
+
     private async Task VerifyAiCliSettingSmoke()
     {
         // The Settings tab content is realized only when selected.
@@ -166,6 +201,14 @@ public partial class MainWindow : Window
         await Dispatcher.InvokeAsync(() =>
         {
         }, DispatcherPriority.ApplicationIdle);
+        if (UpdateWebRatingsButton == null || UpdateWebRatingsAdvancedButton == null)
+            throw new InvalidOperationException("UI acceptance: web ratings update buttons are missing in Settings > AI & Models.");
+        if (WebRatingsBanner == null || string.IsNullOrWhiteSpace(WebRatingsBanner.Text))
+            throw new InvalidOperationException("UI acceptance: WebRatingsBanner is missing or empty in Settings > AI & Models.");
+        if (ResetModelRatingButton == null)
+            throw new InvalidOperationException("UI acceptance: ResetModelRatingButton is missing in Settings > AI & Models.");
+        if (AutoRefreshWebRatings == null)
+            throw new InvalidOperationException("UI acceptance: AutoRefreshWebRatings checkbox is missing in Settings > AI & Models.");
         if (UseCliChoice.IsChecked != settings.UseAiCli || NoCliChoice.IsChecked == settings.UseAiCli)
             throw new InvalidOperationException("UI acceptance: external AI provider choice does not show the saved setting.");
         // Radio check changes are raised on the dispatcher, like a real click.
@@ -646,8 +689,13 @@ public partial class MainWindow : Window
             {
                 health = result.Health;
                 HealthGrid.ItemsSource = health;
+                CliToolProviderDiscovery.EnableUsable(settings, health);
                 store.SaveSettings(settings);
+                ModelCatalogMerge.AssignAutomaticRoles(settings, health, store);
+                store.SaveSettings(settings);
+                RefreshProviderChoices();
                 LoadProvider();
+                RefreshRoutes();
                 RefreshAgentsGrid();
                 Status.Text = result.Detail;
                 return;
@@ -708,6 +756,7 @@ public partial class MainWindow : Window
                 "custom-cli" => new ExternalCliProvider(runner),
                 "responses-api" => new ResponsesApiProvider(),
                 _ when CliProvider.HasExecutionProfile(id) || CliProvider.IsDetectedOnly(id) => new CliProvider(id, runner),
+                _ when settings.Providers.FirstOrDefault(p => p.Id.Equals(id, StringComparison.OrdinalIgnoreCase)) is { ResponsesApiBaseUrl.Length: > 0 } => new ResponsesApiProvider(id),
                 _ => null
             };
             if (created != null)
@@ -769,6 +818,8 @@ public partial class MainWindow : Window
         ResponsesApiKeyStatus.Text = p.ProtectedResponsesApiKey.Length == 0 ? "No saved API key." : "API key saved and protected for this Windows account. Leave blank to keep it.";
         ModelGrid.ItemsSource = p.Models.ToArray();
         ModelDiscoveryNote.Text = p.ModelDiscoveryStatus + (p.ModelCatalogCheckedAt is { } at ? " | " + at.ToLocalTime().ToString("g") : "");
+        if (ResetModelRatingButton != null)
+            ResetModelRatingButton.IsEnabled = false;
         loading = false;
     }
 
@@ -837,6 +888,8 @@ public partial class MainWindow : Window
         store.SaveSettings(settings);
         LoadProvider();
         RefreshRoutes();
+        RefreshAgentsGrid();
+        UpdateWebRatingsBanner(ModelRatings.ActiveSource);
         Status.Text = "Model allowed for " + kind + ". Local models still require qualification.";
         return Task.CompletedTask;
     });
@@ -849,6 +902,8 @@ public partial class MainWindow : Window
         store.SaveSettings(settings);
         LoadProvider();
         RefreshRoutes();
+        RefreshAgentsGrid();
+        UpdateWebRatingsBanner(ModelRatings.ActiveSource);
         return Task.CompletedTask;
     });
     private void ModelSelected(object sender, SelectionChangedEventArgs e)
@@ -859,6 +914,8 @@ public partial class MainWindow : Window
         ModelQuality.Text = model.EffectiveQuality.ToString();
         ModelCost.Text = model.EffectiveCostRank.ToString();
         ModelBlocked.IsChecked = model.Blocked;
+        if (ResetModelRatingButton != null)
+            ResetModelRatingButton.IsEnabled = model.RatedByUser;
     }
 
     private async void SaveModelPreferences(object sender, RoutedEventArgs e) => await Guard(() =>
@@ -879,6 +936,8 @@ public partial class MainWindow : Window
         store.SaveSettings(settings);
         LoadProvider();
         RefreshRoutes();
+        RefreshAgentsGrid();
+        UpdateWebRatingsBanner(ModelRatings.ActiveSource);
         Status.Text = rated ? "Saved your rating; it replaces the built-in rating when choosing models." : "Saved; the model still uses the built-in rating.";
         return Task.CompletedTask;
     });
@@ -1106,7 +1165,7 @@ public partial class MainWindow : Window
         HistoryText.Text = JsonSerializer.Serialize(proposal, new JsonSerializerOptions { WriteIndented = true });
         if (MessageBox.Show(this, "Apply these proposed changes? Review the complete contents in History before confirming.\n\n" + string.Join('\n', proposal.Edits.Select(x => x.Path)), "Apply reviewed edits", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
         {
-            Tabs.SelectedIndex = 4;
+            Tabs.SelectedItem = ActivityTab;
             return;
         }
 

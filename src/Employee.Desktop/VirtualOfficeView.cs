@@ -30,14 +30,14 @@ public sealed class VirtualOfficeView : UserControl
     private sealed record Room(string Name, int X0, int Y0, int Floor, string[] Props, Seat[] Seats);
     private static readonly Room[] Rooms =
     [
-        new("Manager", 1, 1, 5, ["plant-tall", "bookshelf", "bookshelf", "cabinet", "whiteboard", "plant-tall", "cooler", "cabinet", "bookshelf", "plant", "coffee", "plant", "bin"], [new("Manager")]),
+        new("Manager", 1, 1, 5, ["plant-tall", "bookshelf", "bookshelf", "cabinet", "whiteboard", "plant-tall", "cooler", "cabinet", "bookshelf", "plant", "coffee", "plant-potted", "bin"], [new("Manager")]),
         new("Research", 9, 1, 3, ["bookshelf", "bookshelf", "whiteboard", "bookshelf", "cabinet", "plant-tall", "plant", "desk", "desk", "bin", "plant", "plant", "plant"], [new("Researcher", WorkKind.Research), new("Researcher", WorkKind.Research), new("Researcher", WorkKind.Research), new("Researcher", WorkKind.Research)]),
         new("Development", 17, 1, 1, ["cabinet", "printer", "bookshelf", "whiteboard", "cabinet", "plant-tall", "cooler", "desk", "desk", "plant", "bin", "plant", "plant"], [new("Developer"), new("Developer"), new("Developer"), new("Developer")]),
         new("Data & Analysis", 1, 9, 1, ["cabinet", "cabinet", "printer", "whiteboard", "cabinet", "plant-tall", "cooler", "desk", "desk", "bin", "plant", "plant", "plant"], [new("Classification", WorkKind.Classification), new("Extraction", WorkKind.Extraction), new("Classification", WorkKind.Classification), new("Extraction", WorkKind.Extraction)]),
-        new("Design & Art", 17, 9, 2, ["whiteboard", "plant-tall", "whiteboard", "bookshelf", "printer", "plant-tall", "coffee", "desk", "desk", "bin", "plant", "plant", "plant"], [new("Designer"), new("Designer"), new("Designer"), new("Designer")]),
+        new("Design & Art", 17, 9, 2, ["whiteboard", "plant-tall", "whiteboard", "bookshelf", "printer", "plant-tall", "coffee", "desk", "desk", "bin", "plant", "plant-potted", "plant"], [new("Designer"), new("Designer"), new("Designer"), new("Designer")]),
         new("Creative", 1, 17, 0, ["plant-tall", "whiteboard", "cabinet", "bookshelf", "whiteboard", "plant-tall", "coffee", "desk", "desk", "bin", "plant", "plant", "plant"], [new("Writer"), new("Writer"), new("Writer"), new("Writer")]),
         new("QA & Review", 9, 17, 4, ["cabinet", "cabinet", "whiteboard", "printer", "bookshelf", "plant-tall", "cooler", "desk", "desk", "bin", "plant", "plant", "plant"], [new("Reviewer"), new("Reviewer"), new("Reviewer"), new("Reviewer")]),
-        new("External Tools", 17, 17, 3, ["printer", "cabinet", "printer", "cabinet", "bookshelf", "plant-tall", "coffee", "desk", "desk", "bin", "plant", "plant", "plant"], [new("Tool operator"), new("Tool operator"), new("Tool operator"), new("Tool operator")])
+        new("External Tools", 17, 17, 3, ["printer", "cabinet", "printer", "cabinet", "bookshelf", "plant-tall", "coffee", "desk", "desk", "bin", "plant", "plant-potted", "plant"], [new("Tool operator"), new("Tool operator"), new("Tool operator"), new("Tool operator")])
     ];
     // Each room has one desk style (sheet); the manager keeps table_1, the others are spread over the
     // desk sheets that exist (table_2 is the props sheet).
@@ -52,6 +52,8 @@ public sealed class VirtualOfficeView : UserControl
     // Desks and furniture are drawn larger than their sheets so they read well next to the people.
     private const double FurnitureScale = 1.5;
     private const double SpareDeskScale = 1.0;
+    private const string PottedPlantFile = "office-plant-se.png";
+    private const double PottedPlantScale = 0.55;
     // Furniture cells inside a room, in the order of a room's Props: the whole back wall, the left
     // wall (side desks against it), the right edge and the front corners. Row 1 and the front rows
     // stay free for walking.
@@ -602,10 +604,13 @@ public sealed class VirtualOfficeView : UserControl
         // A spare desk against a wall, screen turned to the room: desk 0 of the sheet faces down-right
         // (for the left wall), mirrored it faces down-left (for the right wall).
         var spare = name == "desk" && OfficeAssets.Load(Art + TableOf(RoomAt(cell.X, cell.Y)?.Name)) is { } desks ? OfficeAssets.Crop(desks, new Int32Rect(0, 0, 128, 128)) : null;
-        if ((spare ?? Piece("table_2.png", name)) is not { } prop) return;
+        var potted = name == "plant-potted" && OfficeAssets.Load(PottedPlantFile) is { } plantImg
+            ? OfficeAssets.Crop(plantImg, OfficeAssets.OpaqueBounds(plantImg, new Int32Rect(0, 0, plantImg.PixelWidth, plantImg.PixelHeight)))
+            : null;
+        if ((spare ?? potted ?? Piece("table_2.png", name == "plant-potted" ? "plant" : name)) is not { } prop) return;
         var p = MapPoint(cell.X, cell.Y);
-        // Spare desks against a wall are drawn smaller so neighbours don't overlap.
-        var scaleBy = spare != null ? SpareDeskScale : FurnitureScale;
+        // Spare desks against a wall are drawn smaller so neighbours don't overlap; generated 128x128 props scale to match.
+        var scaleBy = spare != null ? SpareDeskScale : potted != null ? PottedPlantScale : FurnitureScale;
         var sprite = Sprite(prop, scaleBy);
         // Turn furniture to face the room: against the left wall it faces down-right, elsewhere
         // (right wall, open edges) down-left. Mirror the pieces drawn the other way.

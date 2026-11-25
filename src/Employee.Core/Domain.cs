@@ -247,6 +247,9 @@ public sealed record ModelInfo(string Id, WorkKind[] Kinds, int Quality = 50, in
     public string RatingSource => ModelRatings.Effective(this).Source;
     public string VerificationDisplay => AccountAvailabilityVerified ? "Account access verified by a successful run" : DiscoverySource;
 
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string CapabilitiesTooltip => ModelRatings.DescribeCapabilities(null, this);
+
     public int RoleRank(WorkKind kind) => PrimaryKinds.Contains(kind) ? 2 : !ManualRoleKinds.Contains(kind) && AutomaticPrimaryKinds.Contains(kind) ? 1 : 0;
     public string AllowedTaskTypes => string.Join(", ", Kinds.Select(kind => RoleRank(kind) switch
     {
@@ -281,6 +284,8 @@ public sealed class ManagerSettings
     public bool ReviewByOtherModel { get; set; } = true;
     // Optional JSON ratings source refreshed automatically once a day (see ModelRatingsService).
     public string RatingsSourceUrl { get; set; } = "";
+    // When true, automatically refresh web ratings once a day on startup (default false).
+    public bool AutoUpdateWebRatings { get; set; } = false;
     // Results judged before this time are ignored by learning (Reset learning).
     public DateTimeOffset? LearningResetAt { get; set; }
     public TaskAutomationSettings Automation { get; set; } = new();
@@ -370,6 +375,8 @@ public interface IManagerStore : IDisposable
     void SaveProject(ProjectInfo project);
     IReadOnlyList<ProjectInfo> Projects();
     void SaveWork(WorkItem work);
+    // Removes one step with its logs and handoffs, when a new step replaces it outright.
+    void DeleteWork(string workId);
     IReadOnlyList<WorkItem> WorkItems();
     void Log(string workId, string eventName, string message);
     IReadOnlyList<TaskLog> Logs(string workId);

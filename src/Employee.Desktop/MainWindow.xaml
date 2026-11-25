@@ -1,4 +1,4 @@
-<Window xmlns:local="clr-namespace:Employee.Desktop" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Class="Employee.Desktop.MainWindow" Style="{StaticResource {x:Type Window}}" Title="AI Employee Manager" Icon="Assets/app.ico" WindowStyle="None" Width="1672" Height="940" MinWidth="1320" MinHeight="820" WindowStartupLocation="CenterScreen">
+<Window xmlns:local="clr-namespace:Employee.Desktop" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Class="Employee.Desktop.MainWindow" Style="{StaticResource {x:Type Window}}" Title="AI Employee Manager" Icon="Assets/app.ico" WindowStyle="None" WindowState="Maximized" Width="1672" Height="940" MinWidth="1320" MinHeight="820" WindowStartupLocation="CenterScreen">
  <shell:WindowChrome.WindowChrome>
   <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="14" />
  </shell:WindowChrome.WindowChrome>
@@ -6,6 +6,7 @@
   <local:TaskModifiedTimeConverter x:Key="TaskModifiedTime" />
   <local:TaskProjectNameConverter x:Key="TaskProjectName" />
   <local:StepNumberConverter x:Key="StepNumber" />
+  <local:StepTimeConverter x:Key="StepTime" />
   <local:MilestoneInfoConverter x:Key="MilestoneInfo" />
   <Style x:Key="TaskSelectionCheck" TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
    <Setter Property="Template">
@@ -56,7 +57,7 @@
    <RowDefinition Height="*" />
    <RowDefinition Height="Auto" />
   </Grid.RowDefinitions>
-  <Border Grid.Row="0" Padding="18,16" BorderBrush="#312B4A" BorderThickness="0,0,1,1" MouseLeftButtonDown="DragShell" Width="336" HorizontalAlignment="Left" Panel.ZIndex="3">
+  <Border Grid.Row="0" Padding="18,12" BorderBrush="#312B4A" BorderThickness="0,0,1,1" MouseLeftButtonDown="DragShell" Panel.ZIndex="3">
    <Border.Background>
     <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
      <GradientStop Color="#252037" Offset="0" />
@@ -64,51 +65,33 @@
     </LinearGradientBrush>
    </Border.Background>
    <DockPanel>
-    <Border Width="55" Height="55" CornerRadius="14" Margin="0,0,14,0">
+    <Border Width="42" Height="42" CornerRadius="12" Margin="0,0,12,0">
      <Border.Background>
       <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
        <GradientStop Color="#995AFA" Offset="0" />
        <GradientStop Color="#6C63C9" Offset="1" />
       </LinearGradientBrush>
      </Border.Background>
-     <Viewbox Width="36" Height="36" VerticalAlignment="Center">
+     <Viewbox Width="26" Height="26" VerticalAlignment="Center">
       <Canvas Width="24" Height="24">
        <Path Data="M12,2 L15,9 22,12 15,15 12,22 9,15 2,12 9,9 Z M4,1 V6 M1,4 H6 M21,18 V23 M18,21 H23" Stroke="#FFFFFF" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
       </Canvas>
      </Viewbox>
     </Border>
     <StackPanel VerticalAlignment="Center">
-     <TextBlock Text="AI Employee Manager" FontSize="20" FontWeight="Bold" />
-     <TextBlock Text="Your AI Workforce on Windows" Foreground="#B4A9CC" FontSize="12" Margin="0,6,0,0" />
+     <TextBlock Text="AI Employee" FontSize="17" FontWeight="Bold" />
+     <TextBlock Text="Minimalist Workspace" Foreground="#B4A9CC" FontSize="11" Margin="0,2,0,0" />
     </StackPanel>
    </DockPanel>
   </Border>
-  <Grid Grid.Column="1" Grid.Row="0" Margin="90,40,14,12" Background="Transparent" MouseLeftButtonDown="DragShell">
-   <Grid.RowDefinitions>
-    <RowDefinition Height="Auto" />
-    <RowDefinition Height="Auto" />
-   </Grid.RowDefinitions>
-   <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0" VerticalAlignment="Center">
-    <Button x:Name="NotificationButton" Content="♧" Click="ShowNotifications" ToolTip="Notifications" Width="43" Height="43" Padding="4" Margin="0,0,6,0" />
-    <Border Background="#0E3328" BorderBrush="#1E684A" BorderThickness="1" CornerRadius="20" Padding="8,10" Margin="0,0,12,0" Width="120">
-     <TextBlock x:Name="HeaderRunState" Text="● Ready" Foreground="#7EE7B8" TextAlignment="Center" />
+  <Border Grid.Column="1" Grid.Row="0" BorderBrush="#312B4A" BorderThickness="0,0,0,1" Padding="18,10,140,10" Background="Transparent" MouseLeftButtonDown="DragShell">
+   <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+    <Button x:Name="NotificationButton" Content="&#xEA8F;" FontFamily="Segoe MDL2 Assets" FontSize="15" Click="ShowNotifications" ToolTip="Notifications" Width="38" Height="38" MinHeight="38" Padding="0" Margin="0,0,8,0" />
+    <Border Background="#0E3328" BorderBrush="#1E684A" BorderThickness="1" CornerRadius="16" Padding="12,7" Margin="0,0,8,0" MinWidth="104" VerticalAlignment="Center">
+     <TextBlock x:Name="HeaderRunState" Text="● Ready" Foreground="#7EE7B8" TextAlignment="Center" FontSize="12" />
     </Border>
-    <TextBlock x:Name="HeaderElapsed" Text="—" VerticalAlignment="Center" Margin="0,0,14,0" Width="82" TextAlignment="Center" />
-    <Button ToolTip="Pause after the running step" Click="HeaderPause" Width="46" Height="46" Padding="11" Margin="0,0,12,0">
-     <Viewbox Width="23" Height="23" VerticalAlignment="Center">
-      <Canvas Width="24" Height="24">
-       <Path Data="M8,4 V20 M16,4 V20" Stroke="#E2DAF3" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
-      </Canvas>
-     </Viewbox>
-    </Button>
-    <Button Foreground="#FC8C9F" ToolTip="Stop and save" Click="HeaderStop" Width="46" Height="46" Padding="11" Margin="0,0,12,0" Background="#4C2635" BorderBrush="#B94F66">
-     <Viewbox Width="23" Height="23" VerticalAlignment="Center">
-      <Canvas Width="24" Height="24">
-       <Path Data="M6,6 H18 V18 H6 Z" Stroke="#FF8C99" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
-      </Canvas>
-     </Viewbox>
-    </Button>
-    <Button Click="ShellNewTask" Height="42" Margin="4,0,10,0" Padding="15,8" Width="164">
+    <TextBlock x:Name="HeaderElapsed" Text="—" VerticalAlignment="Center" Margin="0,0,10,0" MinWidth="52" TextAlignment="Center" Foreground="#B8B0CF" FontSize="12" />
+    <Button Click="ShellNewTask" Height="38" MinHeight="38" Margin="0" Padding="14,6">
      <Button.Background>
       <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
        <GradientStop Color="#8650DB" Offset="0" />
@@ -116,23 +99,16 @@
       </LinearGradientBrush>
      </Button.Background>
      <StackPanel Orientation="Horizontal">
-      <Viewbox Width="20" Height="20" VerticalAlignment="Center">
+      <Viewbox Width="16" Height="16" VerticalAlignment="Center">
        <Canvas Width="24" Height="24">
-        <Path Data="M12,4 V20 M4,12 H20" Stroke="#DDD1FA" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+        <Path Data="M12,4 V20 M4,12 H20" Stroke="#DDD1FA" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
        </Canvas>
       </Viewbox>
-      <TextBlock Text="New Task" Margin="9,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" />
+      <TextBlock Text="New Task" Margin="8,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" />
      </StackPanel>
     </Button>
    </StackPanel>
-   <Border BorderBrush="#4C405F" BorderThickness="1" CornerRadius="15" Background="#211C34" VerticalAlignment="Center" Padding="2" Margin="0,0,16,0" Width="480" HorizontalAlignment="Left">
-    <WrapPanel VerticalAlignment="Center">
-     <Button x:Name="TaskModeButton" Content="⌂  Task Mode" Tag="task" Click="ShellMode" Background="#46316D" Margin="0" Padding="16,9" Height="44" MinHeight="44" BorderThickness="1" MinWidth="134" Width="148" BorderBrush="#A084E9" />
-     <Button x:Name="AutonomousModeButton" Content="♧  Autonomous" Tag="autonomous" Click="ShellMode" Background="Transparent" Margin="0" Padding="16,9" Height="44" MinHeight="44" BorderThickness="1" MinWidth="134" Width="148" BorderBrush="Transparent" />
-     <CheckBox x:Name="ShellAway" Content="☕  Away Mode" Checked="ShellAwayChanged" Unchecked="ShellAwayChanged" Style="{StaticResource ShellModeCheck}" Margin="0" Padding="14,10" />
-    </WrapPanel>
-   </Border>
-  </Grid>
+  </Border>
   <Border Grid.Row="1" BorderBrush="#312B4A" BorderThickness="0,0,1,0">
    <Border.Background>
     <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
@@ -163,20 +139,13 @@
      <StackPanel x:Name="ShellNavigation">
       <Button Style="{StaticResource ShellMenuButton}" Content="◈   Rik's office" Tag="office" Click="ShellNavigate" />
       <Button Style="{StaticResource ShellMenuButton}" Content="⌂   Dashboard" Tag="dashboard" Click="ShellNavigate" />
-      <Button Style="{StaticResource ShellMenuButton}" Content="▱   Projects" Tag="projects" Click="ShellNavigate" />
       <Button Style="{StaticResource ShellMenuButton}" Content="☷   Tasks" Tag="tasks" Click="ShellNavigate" />
-      <Button Style="{StaticResource ShellMenuButton}" Content="Testing" Tag="testing" Click="ShellNavigate" />
-      <Button Style="{StaticResource ShellMenuButton}" Content="♧   Agents" Tag="agents" Click="ShellNavigate" />
-      <Button Style="{StaticResource ShellMenuButton}" Content="▣   Providers &amp; Models" Tag="providers" Click="ShellNavigate" />
-      <Button Style="{StaticResource ShellMenuButton}" Content="▤   Local AI (Ollama)" Tag="local" Click="ShellNavigate" />
-      <Button Style="{StaticResource ShellMenuButton}" Content="▦   Tools" Tag="tools" Click="ShellNavigate" />
-      <Button Style="{StaticResource ShellMenuButton}" Content="⇄   Workflows" Tag="workflows" Click="ShellNavigate" />
-      <Button Style="{StaticResource ShellMenuButton}" Content="♙   Activity &amp; Logs" Tag="activity" Click="ShellNavigate" />
       <Button Style="{StaticResource ShellMenuButton}" Content="✓   Approvals" Tag="approvals" Click="ShellNavigate" />
-      <Button Style="{StaticResource ShellMenuButton}" Content="▭   Guide" Tag="guide" Click="ShellNavigate" />
+      <Button Style="{StaticResource ShellMenuButton}" Content="▱   Projects" Tag="projects" Click="ShellNavigate" />
+      <Button Style="{StaticResource ShellMenuButton}" Content="▣   Providers &amp; Models" Tag="providers" Click="ShellNavigate" />
+      <Button Style="{StaticResource ShellMenuButton}" Content="▦   Tools" Tag="tools" Click="ShellNavigate" />
       <Border Height="1" Background="#3B344F" Margin="8,14,8,14" />
       <Button Style="{StaticResource ShellMenuButton}" Content="⚙   Settings" Tag="settings" Click="ShellNavigate" />
-      <Button Style="{StaticResource ShellMenuButton}" Content="↥   Updates" Tag="updates" Click="ShellNavigate" Visibility="Collapsed" />
      </StackPanel>
     </ScrollViewer>
    </DockPanel>
@@ -313,13 +282,12 @@
        <TextBlock Text="Task list" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12" />
        <DockPanel Grid.Row="1">
         <StackPanel DockPanel.Dock="Top">
-         <WrapPanel Margin="0,0,0,4">
-          <Button x:Name="PreviousTaskPageButton" Content="" FontFamily="Segoe MDL2 Assets" Width="36" Padding="0" Click="PreviousTaskPage" ToolTip="Previous page" AutomationProperties.Name="Previous page" />
-          <TextBlock x:Name="TaskPageStatus" VerticalAlignment="Center" Margin="4,0,12,8" />
-          <Button x:Name="NextTaskPageButton" Content="" FontFamily="Segoe MDL2 Assets" Width="36" Padding="0" Click="NextTaskPage" ToolTip="Next page" AutomationProperties.Name="Next page" />
-         </WrapPanel>
-         <WrapPanel Margin="0,0,0,12">
-          <ToggleButton x:Name="TaskFilterButton" Content="Filter" Padding="12,8" Margin="0,0,8,8" VerticalAlignment="Top" />
+         <WrapPanel Margin="0,0,0,8" VerticalAlignment="Center">
+          <Button x:Name="PreviousTaskPageButton" Content="" FontFamily="Segoe MDL2 Assets" Width="34" MinHeight="34" Padding="0" Click="PreviousTaskPage" ToolTip="Previous page" AutomationProperties.Name="Previous page" />
+          <TextBlock x:Name="TaskPageStatus" VerticalAlignment="Center" Margin="2,0,8,8" />
+          <Button x:Name="NextTaskPageButton" Content="" FontFamily="Segoe MDL2 Assets" Width="34" MinHeight="34" Padding="0" Click="NextTaskPage" ToolTip="Next page" AutomationProperties.Name="Next page" />
+          <Border Width="1" Height="22" Background="#3B344F" Margin="4,0,10,8" />
+          <ToggleButton x:Name="TaskFilterButton" Content="Filter" Padding="12,7" Margin="0,0,8,8" VerticalAlignment="Top" />
           <Popup x:Name="TaskFilterPopup" PlacementTarget="{Binding ElementName=TaskFilterButton}" Placement="Bottom" StaysOpen="False" IsOpen="{Binding IsChecked, ElementName=TaskFilterButton, Mode=TwoWay}" Opened="TaskFilterOpened">
            <Border Background="#211D32" BorderBrush="#49415F" BorderThickness="1" CornerRadius="8" Padding="12" PreviewKeyDown="TaskFilterKeyDown">
             <StackPanel>
@@ -334,8 +302,7 @@
            </Border>
           </Popup>
           <WrapPanel x:Name="TaskStateLabels" />
-          <TextBlock Text="Project" VerticalAlignment="Center" Margin="4,0,8,8" />
-          <ComboBox x:Name="TaskProjectFilter" DisplayMemberPath="Name" MinWidth="180" MaxWidth="300" Margin="0,0,8,8" SelectionChanged="TaskProjectFilterChanged" AutomationProperties.Name="Filter tasks by project" />
+          <ComboBox x:Name="TaskProjectFilter" DisplayMemberPath="Name" MinWidth="180" MaxWidth="280" Margin="0,0,8,8" SelectionChanged="TaskProjectFilterChanged" AutomationProperties.Name="Filter tasks by project" ToolTip="Filter by project" />
           <TextBlock x:Name="TaskFilterCount" VerticalAlignment="Center" Margin="4,0,0,8" Foreground="#B8B0CF" />
          </WrapPanel>
          <WrapPanel Margin="0,0,0,8">
@@ -426,7 +393,7 @@
           <DataGridTextColumn Header="AI" CanUserSort="False" Binding="{Binding ProviderId}" Width="70" />
           <DataGridTextColumn Header="Model" CanUserSort="False" Binding="{Binding ModelDisplay}" Width="150" />
           <DataGridTextColumn Visibility="Collapsed" Header="Runs" CanUserSort="False" Binding="{Binding Attempts}" Width="55" />
-          <DataGridTextColumn Header="Scheduled" CanUserSort="False" Binding="{Binding ScheduledAt,StringFormat=dd/MM HH:mm}" Width="115" />
+          <DataGridTextColumn Visibility="Collapsed" Header="Scheduled" CanUserSort="False" Binding="{Binding ScheduledAt,StringFormat=dd/MM HH:mm}" Width="115" />
           <DataGridTextColumn Header="Problem" CanUserSort="False" Binding="{Binding ProblemReason}" Width="270">
            <DataGridTextColumn.ElementStyle>
             <Style TargetType="TextBlock">
@@ -579,6 +546,13 @@
             <DataGridTextColumn Header="Executed by" Binding="{Binding ExecutorDisplay}" Width="220" />
             <DataGridTextColumn Header="Skill" Binding="{Binding SkillId}" Width="180" />
             <DataGridTextColumn Header="State" Binding="{Binding State}" Width="150" />
+            <DataGridTextColumn Header="When it ran" Binding="{Binding Id, Converter={StaticResource StepTime}}" Width="230">
+             <DataGridTextColumn.ElementStyle>
+              <Style TargetType="TextBlock">
+               <Setter Property="ToolTip" Value="The first attempt's start and the last attempt's end, local time. Steps are in the order they ran." />
+              </Style>
+             </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
             <DataGridTextColumn Header="AI" Binding="{Binding ProviderId}" Width="90" />
             <DataGridTextColumn Header="Model" Binding="{Binding ModelDisplay}" Width="150">
              <DataGridTextColumn.ElementStyle>
@@ -705,13 +679,6 @@
      </WrapPanel>
     </Grid>
    </TabItem>
-      <TabItem Header="Testing" MinWidth="170" x:Name="TestingTab">
-       <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-        <StackPanel Margin="20" MaxWidth="1150" HorizontalAlignment="Stretch">
-         <ContentControl x:Name="TestSettingsHost" />
-        </StackPanel>
-       </ScrollViewer>
-      </TabItem>
    <TabItem x:Name="SettingsTab" Header="Settings">
     <DockPanel Margin="18">
      <StackPanel DockPanel.Dock="Top">
@@ -871,10 +838,12 @@
          <WrapPanel Margin="0,10,0,4">
           <Button Content="Detect agents &amp; models" Click="DetectProviders" Background="#7545D6" Foreground="White" />
           <Button Content="Enable usable agents" Click="EnableAvailableProviders" />
+          <Button x:Name="UpdateWebRatingsButton" Content="Update model ratings from web" Click="UpdateRatingsFromWeb" ToolTip="Consult public benchmark and pricing websites to update quality and usage rank for all agent models" />
           <TextBlock Text="Detection asks the CLI Tool API only; no inference is run." Foreground="#B8B0CF" VerticalAlignment="Center" Margin="8,0,0,8" />
          </WrapPanel>
-         <TextBlock x:Name="CliToolApiStatus" TextWrapping="Wrap" Foreground="#B8B0CF" Margin="0,2,0,8" />
-         <DataGrid x:Name="ProviderAgentsGrid" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" HeadersVisibility="Column" PreviewMouseLeftButtonUp="ProviderAgentRowClicked" Height="330" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+<TextBlock x:Name="CliToolApiStatus" TextWrapping="Wrap" Foreground="#B8B0CF" Margin="0,2,0,8" />
+          <TextBlock x:Name="WebRatingsBanner" TextWrapping="Wrap" Foreground="#B8B0CF" Margin="0,0,0,8" />
+          <DataGrid x:Name="ProviderAgentsGrid" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" HeadersVisibility="Column" PreviewMouseLeftButtonUp="ProviderAgentRowClicked" Height="330" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
           <DataGrid.Columns>
            <DataGridTemplateColumn Header="Use" Width="55">
             <DataGridTemplateColumn.CellTemplate>
@@ -954,12 +923,14 @@
          <TextBlock Text="Model ratings" FontWeight="SemiBold" Margin="0,12,0,4" />
          <TextBlock Text="Routing uses each model's rating for the step's work type, adjusted by measured runs and your approvals/ratings. Ratings in model-ratings.json (data folder) override the built-in table; a ratings URL is refreshed automatically once a day." TextWrapping="Wrap" />
          <TextBlock x:Name="RatingsStatus" TextWrapping="Wrap" Margin="0,4" />
-         <WrapPanel>
-          <TextBox x:Name="RatingsUrl" Width="420" ToolTip="http(s) URL of a JSON ratings file: {&quot;source&quot;:...,&quot;updated&quot;:...,&quot;models&quot;:[{&quot;pattern&quot;:&quot;gpt-6-luna&quot;,&quot;cost&quot;:5,&quot;quality&quot;:{&quot;Coding&quot;:85}}]}" />
-          <Button Content="Update ratings now" Click="UpdateRatingsNow" />
-          <Button Content="Open ratings file" Click="OpenRatingsFile" />
-          <Button Content="Reload ratings file" Click="ReloadRatings" />
-         </WrapPanel>
+<WrapPanel>
+           <TextBox x:Name="RatingsUrl" Width="420" ToolTip="http(s) URL of a JSON ratings file (see Open ratings file for format)" />
+           <Button Content="Update ratings now" Click="UpdateRatingsNow" />
+           <Button x:Name="UpdateWebRatingsAdvancedButton" Content="Auto-update from websites" Click="UpdateRatingsFromWeb" ToolTip="Consult public benchmark and pricing websites to update usage rank and quality for agent models" />
+           <Button Content="Open ratings file" Click="OpenRatingsFile" />
+           <Button Content="Reload ratings file" Click="ReloadRatings" />
+          </WrapPanel>
+          <CheckBox x:Name="AutoRefreshWebRatings" Content="Refresh web ratings automatically once a day" Margin="0,6,0,4" Checked="AutoRefreshWebRatingsChanged" Unchecked="AutoRefreshWebRatingsChanged" />
          <StackPanel>
           <TextBlock Text="Global calls/day (0 = unlimited)" />
           <TextBox x:Name="DailyCallLimit" Width="180" />
@@ -1049,15 +1020,16 @@
            <Button Content="Remove selected model" Click="RemoveModel" />
            <Button Content="Evaluate selected Ollama model" Click="EvaluateModel" />
           </WrapPanel>
-          <WrapPanel Grid.Row="2">
-           <TextBlock Text="Quality rank" VerticalAlignment="Center" Margin="0,0,8,8" />
-           <TextBox x:Name="ModelQuality" Text="50" Width="70" />
-           <TextBlock Text="Cost rank" VerticalAlignment="Center" Margin="0,0,8,8" />
-           <TextBox x:Name="ModelCost" Text="50" Width="70" />
-           <CheckBox x:Name="ModelBlocked" Content="Blocked" />
-           <Button Content="Save selected model preferences" Click="SaveModelPreferences" />
-          </WrapPanel>
-          <DataGrid Grid.Row="3" x:Name="ModelGrid" SelectionChanged="ModelSelected" Height="260">
+<WrapPanel Grid.Row="2">
+            <TextBlock Text="Quality rank" VerticalAlignment="Center" Margin="0,0,8,8" />
+            <TextBox x:Name="ModelQuality" Text="50" Width="70" />
+            <TextBlock Text="Cost rank" VerticalAlignment="Center" Margin="0,0,8,8" />
+            <TextBox x:Name="ModelCost" Text="50" Width="70" />
+            <CheckBox x:Name="ModelBlocked" Content="Blocked" />
+            <Button Content="Save selected model preferences" Click="SaveModelPreferences" />
+            <Button x:Name="ResetModelRatingButton" Content="Reset to automatic rating" Click="ResetSelectedModelRating" IsEnabled="False" ToolTip="Clear manual user rating so this model uses web or built-in ratings again" />
+           </WrapPanel>
+          <DataGrid Grid.Row="3" x:Name="ModelGrid" SelectionChanged="ModelSelected" Height="260" LoadingRow="ModelGridLoadingRow">
            <DataGrid.Columns>
             <DataGridTextColumn Header="Model ID (blank = CLI default)" Binding="{Binding Id}" Width="*" />
             <DataGridTextColumn Header="Allowed task types" Binding="{Binding AllowedTaskTypes}" Width="220" />
@@ -1202,58 +1174,6 @@
      <DataGrid x:Name="ApprovalsGrid" AutoGenerateColumns="True" />
     </DockPanel>
    </TabItem>
-   <TabItem Header="Guide" x:Name="GuideTab">
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-     <StackPanel Margin="22" MaxWidth="900" HorizontalAlignment="Left">
-      <TextBlock Text="Quick start guide" FontSize="25" FontWeight="SemiBold" />
-      <TextBlock Text="Three basic steps: add an external AI provider, add a project, then run a task." Foreground="#B8B0CF" TextWrapping="Wrap" Margin="0,4,0,18" />
-
-      <Border Background="#1B1833" BorderBrush="#3B344F" BorderThickness="1" CornerRadius="16" Padding="20" Margin="0,0,0,18">
-       <StackPanel>
-        <TextBlock Text="1. How to add a CLI" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-        <TextBlock Foreground="#B8B0CF" TextWrapping="Wrap" LineHeight="22">
-         <Run Text="a) Install and sign in to the CLI yourself (Claude Code, Copilot CLI, Codex, Gemini CLI, OpenCode, Freebuff or Ollama)." /><LineBreak />
-         <Run Text="b) Open Providers &amp; Models and click &quot;Detect providers &amp; refresh model catalog&quot;. Available external providers are detected; Ollama answers only and never edits files." /><LineBreak />
-         <Run Text="c) Optional: under Provider settings set an Executable path for a CLI that is not on PATH, change Priority (higher runs first) or untick a permission, then click &quot;Save provider&quot;." />
-        </TextBlock>
-        <Button Content="Open Providers &amp; Models" Click="ShellNavigate" Tag="providers" HorizontalAlignment="Left" Margin="0,12,0,0" />
-       </StackPanel>
-      </Border>
-
-      <Border Background="#1B1833" BorderBrush="#3B344F" BorderThickness="1" CornerRadius="16" Padding="20" Margin="0,0,0,18">
-       <StackPanel>
-        <TextBlock Text="2. How to add a project" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-        <TextBlock Foreground="#B8B0CF" TextWrapping="Wrap" LineHeight="22">
-         <Run Text="a) Open Settings and go to the Projects section." /><LineBreak />
-         <Run Text="b) Click &quot;Choose folder&quot; (or type the path) to select the project folder." /><LineBreak />
-         <Run Text="c) Optionally enter a Name and Aliases." /><LineBreak />
-         <Run Text="d) Click &quot;Register project&quot; to save it. &quot;Choose folder and scan projects...&quot; registers detected sub-projects in bulk." /><LineBreak />
-         <Run Text="e) Access level: use ReadProject to let AI only inspect and review. Use WriteProject to allow edits; it needs permission on both the task and the provider. Adjust it per project with &quot;Save project&quot; in the task project access area." /><LineBreak />
-         <Run Text="f) Optionally click &quot;Update file index&quot;. Deleting a project removes only its registration; the folder stays untouched." />
-        </TextBlock>
-        <Button Content="Open Settings" Click="ShellNavigate" Tag="settings" HorizontalAlignment="Left" Margin="0,12,0,0" />
-       </StackPanel>
-      </Border>
-
-      <Border Background="#1B1833" BorderBrush="#3B344F" BorderThickness="1" CornerRadius="16" Padding="20" Margin="0,0,0,18">
-       <StackPanel>
-        <TextBlock Text="3. How to run a task" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-        <TextBlock Foreground="#B8B0CF" TextWrapping="Wrap" LineHeight="22">
-         <Run Text="a) Open Tasks, start a new task and stay on the AI task tab." /><LineBreak />
-         <Run Text="b) Select the project (or let it be detected from your text)." /><LineBreak />
-         <Run Text="c) Enter the goal in the main text box. Any language is accepted." /><LineBreak />
-         <Run Text="d) Choose access: ReadProject to review, WriteProject only when edits are intended." /><LineBreak />
-         <Run Text="e) Click &quot;Assign &amp; run&quot;, &quot;Add to queue&quot; or &quot;Save for later&quot;." /><LineBreak />
-         <Run Text="f) Review the plan: in semi-automatic mode a route is proposed first, and you approve it to continue." /><LineBreak />
-         <Run Text="g) Approvals: tasks waiting for permission or review appear in the Approvals tab. Select a row, click &quot;Open selected task&quot;, then &quot;Approve&quot;." /><LineBreak />
-         <Run Text="h) View results in the task details and History. For CLIs that return proposals, use &quot;Apply reviewed edits&quot; after checking them." />
-        </TextBlock>
-        <Button Content="Open Tasks" Click="ShellNavigate" Tag="tasks" HorizontalAlignment="Left" Margin="0,12,0,0" />
-       </StackPanel>
-      </Border>
-     </StackPanel>
-    </ScrollViewer>
-   </TabItem>
   </TabControl>
   <TextBlock Grid.Row="2" Grid.ColumnSpan="2" x:Name="Status" Text="Ready · register a project to begin. AI providers are disabled until you enable them." Margin="12,3,12,3" TextWrapping="Wrap" Foreground="#B8B0CF" FontSize="10" />
   <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,0,12,0" Grid.Column="1" Panel.ZIndex="20">
@@ -1263,3 +1183,7 @@
   </StackPanel>
  </Grid>
 </Window>
+
+
+
+

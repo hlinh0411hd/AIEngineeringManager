@@ -14,17 +14,7 @@ public sealed partial class SqliteStore
             var projectError = TaskProblems.ProjectProblem(work, projects, session);
             if (projectError != null)
                 TaskProblems.Mark(work, WorkState.WrongProject, projectError);
-            else if (work.State == WorkState.WaitingForPermission || new[]
-            {
-                "Implementation request has read-only execution access",
-                "This step requests edits but only read access was approved",
-                "Classification requested access above",
-                "above its approved scope",
-                "Codex needs ReadProject access",
-                "project write permission is not enabled",
-                "Codex reported a read-only session",
-                "Cannot read Codex Windows sandbox settings"
-            }.Any(t => work.Notes.Contains(t, StringComparison.OrdinalIgnoreCase)))
+            else if (work.State == WorkState.WaitingForPermission || IsWrongAccessNotes(work))
                 TaskProblems.Mark(work, WorkState.WrongAccess, work.Notes);
             else
                 continue;
@@ -53,4 +43,21 @@ public sealed partial class SqliteStore
             SaveWork(goal);
         }
     }
+
+    private static readonly string[] AccessProblemPhrases =
+    [
+        "Implementation request has read-only execution access",
+        "This step requests edits but only read access was approved",
+        "Classification requested access above",
+        "above its approved scope",
+        "Codex needs ReadProject access",
+        "Codex reported a read-only session",
+        "Cannot read Codex Windows sandbox settings"
+    ];
+
+    private static bool IsWrongAccessNotes(WorkItem work) =>
+        AccessProblemPhrases.Any(t => work.Notes.Contains(t, StringComparison.OrdinalIgnoreCase)) ||
+        (work.Notes.Contains("project write permission is not enabled", StringComparison.OrdinalIgnoreCase) &&
+         (work.BlockCode == BlockCode.MissingWritePermission ||
+          !work.Notes.StartsWith("No eligible AI for ", StringComparison.OrdinalIgnoreCase)));
 }

@@ -81,7 +81,7 @@ public partial class App : Application
                         providers.Add(new CliProvider(id, runner));
                 using var client = new CliToolApiClient();
                 var discovery = await new CliToolProviderDiscovery(providers, client).DiscoverAsync(settings, CancellationToken.None);
-                IReadOnlyList<ProviderSetupResult> report = discovery.Reachable ? CliToolProviderDiscovery.EnableUsable(settings, discovery.Health) : [];
+                IReadOnlyList<ProviderSetupResult> report = CliToolProviderDiscovery.EnableUsable(settings, discovery.Health);
                 store.SaveSettings(settings);
                 File.WriteAllText(Path.Combine(data, "provider-setup-report.json"), System.Text.Json.JsonSerializer.Serialize(new
                 {

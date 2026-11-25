@@ -63,6 +63,23 @@ static class RoutingChecks
             Assert(f.First.Calls == 2 && f.Second.Calls == 1 && f.Work.State == WorkState.NeedsReview, f.Work.Notes);
             Assert(f.Work.WorkAttempts == 1 && f.Work.ProviderWaits == 2 && f.Work.Switches == 2);
         });
+        await Check("Provider-level failures (quota) switch to the next agent at once, without trying its other models", async () =>
+        {
+            using var f = New(textOnly: true);
+            f.Settings.MaxAttempts = 1;
+            var config = f.Settings.Providers.Single(p => p.Id == f.First.Id);
+            config.Models.Add(new("backup", Enum.GetValues<WorkKind>()));
+            f.First.Response = request => request.ModelId == "a"
+                ? new(FailureKind.RateLimit, "quota exceeded")
+                : new(FailureKind.None, "done");
+
+            await f.Manager.RunAsync(f.Work, f.Settings, f.Health);
+
+            // Quota is per AI: the same agent's other models would hit the same limit, so the next agent runs.
+            Assert(f.First.Calls == 1 && f.Second.Calls == 1, "A quota error must move to the next agent without trying the other models of the first");
+            Assert(f.Work.ProviderId == f.Second.Id, "The fallback must go to the next agent");
+            Assert(f.Work.State == WorkState.NeedsReview && f.Work.WorkAttempts == 1, f.Work.Notes);
+        });
         await Check("A provider detection exception does not stop redetection and fallback to a healthy AI", async () =>
         {
             using var f = New(textOnly: true);
@@ -369,6 +386,87 @@ static class RoutingChecks
             }
 
             Assert(ModelRatings.ParseRung("claude/sonnet@69") is { ProviderId: "claude", ModelId: "sonnet", MaxDifficulty: 69 } && ModelRatings.ParseRung("opencode/opencode/gpt-5")?.ModelId == "opencode/gpt-5", "Priority entries parse provider, model and difficulty cap");
+
+            // Built-in fallback priority selects only models returned for that work kind, respecting difficulty & usage.
+            var fallbackSettings = new ManagerSettings
+            {
+                Mode = RoutingMode.Automatic,
+                UsageLevel = UsageLevel.Auto,
+                UsePriorityLists = true,
+                PrimaryProviders = ["codex", "claude"],
+                Providers =
+                [
+                    new ProviderSettings
+                    {
+                        Id = "antigravity",
+                        Enabled = true,
+                        AllowProjectWrite = true,
+                        Models =
+                        [
+                            new("gemini-4-hydrogen-medium", Enum.GetValues<WorkKind>()),
+                            new("gemini-4-neon-medium", Enum.GetValues<WorkKind>()),
+                            new("gemini-4-carbon-medium", [WorkKind.Planning, WorkKind.Review]) // not Coding
+                        ]
+                    },
+                    new ProviderSettings
+                    {
+                        Id = "kilo",
+                        Enabled = true,
+                        AllowProjectWrite = true,
+                        Models = [new("kilo/nvidia/nemotron-3-ultra-550b-a55b:free", Enum.GetValues<WorkKind>())]
+                    }
+                ]
+            };
+            var fallbackHealth = new ProviderHealth[]
+            {
+                new("antigravity", true, true, true, "ok"),
+                new("kilo", true, true, true, "ok")
+            };
+            var easyCode = router.Select(new WorkItem { Request = "Fix typo in helper", Kind = WorkKind.Coding, Access = AccessLevel.WriteProject, Difficulty = 20 }, fallbackSettings, fallbackHealth, [], new HashSet<string> { "kilo" });
+            Assert(easyCode is { ProviderId: "antigravity", ModelId: "gemini-4-hydrogen-medium" }, "Easy Coding without free CLI picks low-usage hydrogen-medium first: " + easyCode);
+            var hardCode = router.Select(new WorkItem { Request = "Refactor state machine and build compiler", Kind = WorkKind.Coding, Access = AccessLevel.WriteProject, Difficulty = 60 }, fallbackSettings, fallbackHealth, []);
+            Assert(hardCode is { ProviderId: "antigravity", ModelId: "gemini-4-neon-medium" }, "Standard/hard Coding skips @35 hydrogen and picks neon-medium: " + hardCode);
+            var kiloFallback = router.Select(new WorkItem { Request = "Refactor state machine and build compiler", Kind = WorkKind.Coding, Access = AccessLevel.WriteProject, Difficulty = 60 }, fallbackSettings, fallbackHealth, [], new HashSet<string> { "antigravity" });
+            Assert(kiloFallback is { ProviderId: "kilo", ModelId: "kilo/nvidia/nemotron-3-ultra-550b-a55b:free" }, "When Antigravity is unavailable, Coding falls back to kilo free model: " + kiloFallback);
+
+            // Small tasks (<= 35) prefer free resettable models before paid primary providers; harder tasks stay on PrimaryProviders.
+            var mixedSettings = new ManagerSettings
+            {
+                Mode = RoutingMode.Automatic,
+                UsageLevel = UsageLevel.Auto,
+                UsePriorityLists = true,
+                PrimaryProviders = ["codex", "claude"],
+                Providers =
+                [
+                    new ProviderSettings
+                    {
+                        Id = "claude",
+                        Enabled = true,
+                        AllowProjectWrite = true,
+                        Models =
+                        [
+                            new("claude-haiku-5-5", Enum.GetValues<WorkKind>()),
+                            new("sonnet", Enum.GetValues<WorkKind>())
+                        ]
+                    },
+                    new ProviderSettings
+                    {
+                        Id = "kilo",
+                        Enabled = true,
+                        AllowProjectWrite = true,
+                        Models = [new("kilo/nvidia/nemotron-3-ultra-550b-a55b:free", Enum.GetValues<WorkKind>())]
+                    }
+                ]
+            };
+            var mixedHealth = new ProviderHealth[]
+            {
+                new("claude", true, true, true, "ok"),
+                new("kilo", true, true, true, "ok")
+            };
+            var smallFree = router.Select(new WorkItem { Request = "Fix small label", Kind = WorkKind.Coding, Access = AccessLevel.WriteProject, Difficulty = 25 }, mixedSettings, mixedHealth, []);
+            Assert(smallFree is { ProviderId: "kilo", ModelId: "kilo/nvidia/nemotron-3-ultra-550b-a55b:free" }, "Small task (<= 35) uses free resettable model before paid primary: " + smallFree);
+            var hardPaid = router.Select(new WorkItem { Request = "Implement multi-file workflow", Kind = WorkKind.Coding, Access = AccessLevel.WriteProject, Difficulty = 60 }, mixedSettings, mixedHealth, []);
+            Assert(hardPaid is { ProviderId: "claude", ModelId: "sonnet" }, "Standard/hard task (> 35) stays on paid PrimaryProviders: " + hardPaid);
             return Task.CompletedTask;
         });
         await Check("A review is done by another provider than the one that wrote the work", () =>
@@ -1748,6 +1846,36 @@ static class RoutingChecks
             Assert(!UnifiedTaskService.NeedsPlan("Fix typo", WorkKind.Coding, PlanningPolicy.Auto));
             Assert(UnifiedTaskService.NeedsPlan("Xây dựng hệ thống báo cáo", WorkKind.Coding, PlanningPolicy.Auto));
             Assert(!UnifiedTaskService.NeedsPlan("Classify", WorkKind.Classification, PlanningPolicy.Always));
+            return Task.CompletedTask;
+        });
+        await Check("ReclassifyTaskProblems does not turn ExplainUnavailable provider wait into WrongAccess", () =>
+        {
+            using var f = New();
+            f.Work.State = WorkState.WaitingForProvider;
+            f.Work.BlockCode = BlockCode.NoUsableProvider;
+            f.Work.Notes = "No eligible AI for Review / WriteProject. opencode: no eligible model; clixad: project write permission is not enabled; responses-api: project write permission is not enabled.";
+            f.Store.SaveWork(f.Work);
+            f.Store.ReclassifyTaskProblems();
+            var reloaded = f.Store.WorkItems().Single(w => w.Id == f.Work.Id);
+            Assert(reloaded.State == WorkState.WaitingForProvider, $"Expected WaitingForProvider, got {reloaded.State}");
+            return Task.CompletedTask;
+        });
+        await Check("Headless CLI flags and non-interactive denial detection", () =>
+        {
+            using var f = New();
+            foreach (var access in new[] { AccessLevel.TextOnly, AccessLevel.ReadProject, AccessLevel.WriteProject })
+            {
+                f.Work.Access = access;
+                var agy = CliProvider.Arguments("antigravity", new(f.Project, f.Work, "gemini-4-carbon-medium", "", 1000), "prompt");
+                Assert(agy.Contains("--dangerously-skip-permissions"), $"antigravity must pass --dangerously-skip-permissions in {access}");
+            }
+            f.Work.Access = AccessLevel.WriteProject;
+            var devinWrite = CliProvider.Arguments("devin", new(f.Project, f.Work, "swe-2-flash-medium", "", 1000), "prompt");
+            Assert(devinWrite.Contains("--permission-mode") && devinWrite.Contains("dangerous"));
+            f.Work.Access = AccessLevel.ReadProject;
+            var devinRead = CliProvider.Arguments("devin", new(f.Project, f.Work, "swe-2-flash-medium", "", 1000), "prompt");
+            Assert(devinRead.Contains("--permission-mode") && devinRead.Contains("auto"));
+            Assert(ProviderErrors.Classify(0, "jetski: no output produced — a tool required the \"command\" permission that headless mode cannot prompt for, so it was auto-denied.") == FailureKind.Unavailable);
             return Task.CompletedTask;
         });
     }

@@ -78,7 +78,7 @@ public partial class MainWindow
             }
             health = result.Health;
             HealthGrid.ItemsSource = health;
-            IReadOnlyList<ProviderSetupResult> report = result.Reachable ? CliToolProviderDiscovery.EnableUsable(settings, health) : [];
+            IReadOnlyList<ProviderSetupResult> report = CliToolProviderDiscovery.EnableUsable(settings, health);
             store.SaveSettings(settings);
             File.WriteAllText(Path.Combine(dataPath, "provider-setup-report.json"), JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
             settings = store.LoadSettings();

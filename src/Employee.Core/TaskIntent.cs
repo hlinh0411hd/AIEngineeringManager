@@ -82,7 +82,7 @@ public static class TaskIntent
     public static bool RequiresImplementation(string request, ProjectInfo? project = null)
     {
         var text = Normalize(request);
-        var explicitChange = Has(text, "sửa tool", "sửa app", "sửa ứng dụng", "sửa code", "sửa mã", "sửa lỗi", "fix lỗi", "vá lỗi", "khắc phục lỗi", "thêm tính năng", "bổ sung tính năng", "cập nhật tính năng", "triển khai tính năng", "tích hợp tính năng", "cập nhật giao diện", "đổi giao diện", "làm lại giao diện", "tối ưu code", "tái cấu trúc", "viết code", "viết mã", "tạo hệ thống", "xây dựng hệ thống", "xây dựng ứng dụng", "update ui", "update the ui", "update tool", "implement", "refactor", "fix bug", "fix the bug", "bugfix", "create an app", "build an app", "add support");
+        var explicitChange = Has(text, "sửa tool", "sửa app", "sửa ứng dụng", "sửa code", "sửa mã", "sửa lỗi", "fix lỗi", "vá lỗi", "khắc phục lỗi", "thêm tính năng", "bổ sung tính năng", "cập nhật tính năng", "triển khai tính năng", "tích hợp tính năng", "cập nhật giao diện", "đổi giao diện", "làm lại giao diện", "tối ưu code", "tái cấu trúc", "viết code", "viết mã", "tạo hệ thống", "xây dựng hệ thống", "xây dựng ứng dụng", "làm tiếp game", "làm tiếp app", "làm tiếp tool", "phát triển tiếp", "hoàn thiện game", "hoàn thiện app", "update ui", "update the ui", "update tool", "implement", "refactor", "fix bug", "fix the bug", "bugfix", "create an app", "build an app", "add support", "continue the game", "finish the game");
         if (explicitChange)
             return true;
         if (IsTextDeliverable(request) || Has(text, "nghiên cứu thông tin", "tìm thông tin trên mạng", "research information", "compare public information"))

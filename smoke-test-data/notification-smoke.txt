@@ -1,0 +1,1 @@
+PASS: state transition, deduplication, taskbar badge, filtered task navigation, mark read, history/settings persistence, notification window. Native Windows balloon requires manual desktop verification; smoke does not display system notifications.

@@ -136,6 +136,8 @@ static class TaskCommentChecks
         store.SaveWork(draft);
         flow.AddComment(draft, "Run this update", [], true);
         Assert(flow.NextQueued()?.Id == draft.Id);
+        var smallPlan = System.Text.Json.JsonSerializer.Deserialize<WorkPlan>("""{"summary":"Tweak label","needsTest":false,"tasks":[]}""", new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        Assert(smallPlan?.NeedsTest == false);
         Console.WriteLine("PASS task comment persistence, reopening completed/review steps, original goal, permissions, budgets and approval gates; no AI invoked.");
         return 0;
     }

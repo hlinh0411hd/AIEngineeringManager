@@ -19,6 +19,9 @@ public partial class MainWindow
     public sealed class NoticeJournal
     {
         public Dictionary<string, string> Seen { get; set; } = [];
+        // Telegram: the stop each task was last reported for, so one stop is one message.
+        public Dictionary<string, string> TelegramSent { get; set; } = [];
+        public bool TelegramSeeded { get; set; }
         public List<Notice> Items { get; set; } = [];
         public bool WindowsEnabled { get; set; } = true;
     }
@@ -59,7 +62,6 @@ public partial class MainWindow
             return;
         var changed = false;
         var fresh = new List<Notice>();
-        var stops = new List<StopNotice>();
         foreach (var work in tasks)
         {
             var decisions = unified.Decisions(work).Select(d => d.Id).Order().ToArray();
@@ -73,7 +75,6 @@ public partial class MainWindow
             if (stop == null)
                 continue;
             fresh.Add(new(stop.WorkId, stop.HistoryText, DateTimeOffset.UtcNow));
-            stops.Add(stop);
         }
 
         noticeJournal.Items.InsertRange(0, fresh);
@@ -89,7 +90,7 @@ public partial class MainWindow
             SaveNotifications();
         UpdateNotificationBadge();
         if (alert)
-            NotifyTelegram(stops);
+            ConsiderTelegram();
         if (alert && noticeJournal.WindowsEnabled && fresh.Count > 0)
             foreach (var notice in fresh)
                 windowsNotification?.Show("AI Employee Manager", notice.Title, () => OpenNotice(notice));

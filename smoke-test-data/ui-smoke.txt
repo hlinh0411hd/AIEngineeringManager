@@ -1,0 +1,1 @@
+WPF rendered 1934x1094; SQLite opened; 11 tabs. Project registration, indexing, task creation, provider/model permission, settings and SemiAutomatic proposal handlers passed. Image-only clipboard Paste command passed in task and comment inputs; text paste and attachment persistence passed. No AI invoked.

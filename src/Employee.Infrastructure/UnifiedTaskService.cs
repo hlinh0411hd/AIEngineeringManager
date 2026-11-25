@@ -178,6 +178,14 @@ public sealed class UnifiedTaskService
             throw new InvalidOperationException("Comments are limited to 12,000 characters.");
         TaskAttachments.Validate(TaskAttachments.InputFiles(goal).Concat(files));
         goal.Comments.Add(new(text, files, DateTimeOffset.UtcNow));
+        // "sử dụng antigravity thay cho codex": the AI the comment asks for becomes the preferred route of the
+        // task and of the steps made from it, and the fallback tries it before the others.
+        if (ProviderRequest.From(text, store.LoadSettings().Providers.Select(p => p.Id)).Prefer is { } asked && goal.PreferredRoute?.ProviderId != asked)
+        {
+            goal.PreferredRoute = new Route(asked, "", ProviderRequest.ReasonPrefix + asked + " (from a comment)", AutoModel: true);
+            goal.RouteIsAdvisory = false;
+            store.Log(goal.Id, "ProviderRequest", "The comment asks to use " + asked + "; the task now prefers it.");
+        }
         // "ok" / "được rồi" while a milestone waits for sign-off approves it: the next milestone starts and
         // nothing is replanned from the comment.
         if (continueUpdating && files.Count == 0 && goal.SessionId != null && TaskIntent.IsApproval(text) && Engine.SignOff(goal.SessionId))
@@ -936,7 +944,7 @@ public sealed class UnifiedTaskService
                 // plan, invalid JSON, a planner error). User-rejected plans are handled above.
                 var attempted = latestAttempt != null && !planningLogs.Any(l => l.Event == "PlanRejected" && l.Sequence > latestAttempt.Sequence)
                     && autonomy.Plans(session.Id).Any(p => p.At >= latestAttempt.At);
-                if (!goal.IsExternal && !attempted && (hybrid || NeedsPlan(planningRequest, goal.Kind, goal.PlanningOverride ?? settings.Automation.Planning)) && session.RemainingCalls >= 2)
+                if (!goal.IsExternal && !attempted && (hybrid || ProjectScope.ShouldPlan(store, autonomy, goal, planningRequest, goal.PlanningOverride ?? settings.Automation.Planning)) && session.RemainingCalls >= 2)
                 {
                     var plannerAccess = goal.Access == AccessLevel.TextOnly ? AccessLevel.TextOnly : AccessLevel.ReadProject;
                     var sample = PlannerSample(planningRequest, plannerAccess);
@@ -1170,19 +1178,17 @@ public sealed class UnifiedTaskService
         var closed = 0;
         foreach (var old in steps.Where(w => earlier.Contains(w.Id) && !w.IsCoordinator && w.State is not (WorkState.Completed or WorkState.Skipped or WorkState.Running) && !used.Contains(w.Id)))
         {
-            old.State = WorkState.Skipped;
-            old.Notes = "Superseded: the user asked to run the task again and the new plan replaces this unfinished step.";
-            store.SaveWork(old);
-            store.Log(old.Id, "StepSuperseded", old.Notes);
+            // The new plan replaces this step outright, so the step is removed rather than kept as a skipped row.
             foreach (var decision in autonomy.Decisions(session.Id).Where(d => d.WorkId == old.Id && d.State == DecisionState.Pending))
             {
                 decision.State = DecisionState.Rejected;
                 autonomy.SaveDecision(decision);
             }
+            store.DeleteWork(old.Id);
             closed++;
         }
         if (closed > 0)
-            store.Log(goal.Id, "StepsSuperseded", $"{closed} unfinished step(s) from earlier attempts were closed; the redo plan replaces them.");
+            store.Log(goal.Id, "StepsSuperseded", $"{closed} unfinished step(s) from earlier attempts were removed; the redo plan replaces them.");
         return closed;
     }
 

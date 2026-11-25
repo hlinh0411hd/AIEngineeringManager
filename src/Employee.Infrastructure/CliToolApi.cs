@@ -5,7 +5,18 @@ using Employee.Core;
 
 namespace Employee.Infrastructure;
 
-public sealed record CliToolAgent(string Id, string Name, string Binary, bool Installed, string Path, string Version, string BaseUrl);
+public sealed record CliToolAgent(
+    string Id,
+    string Name,
+    string Binary,
+    bool Installed,
+    string Path,
+    string Version,
+    string BaseUrl,
+    string ApiKey,
+    string Authentication,
+    string Usage,
+    IReadOnlyList<string>? Models = null);
 
 public sealed record CliToolProbe(bool Ok, IReadOnlyList<string> Models, string Detail, string Error);
 
@@ -50,7 +61,10 @@ public sealed class CliToolApiClient : IDisposable
         try
         {
             using var document = JsonDocument.Parse(body);
-            if (!document.RootElement.TryGetProperty("agents", out var agents) || agents.ValueKind != JsonValueKind.Array)
+            JsonElement agents;
+            if (document.RootElement.ValueKind == JsonValueKind.Array)
+                agents = document.RootElement;
+            else if (!document.RootElement.TryGetProperty("agents", out agents) || agents.ValueKind != JsonValueKind.Array)
                 return [];
             var result = new List<CliToolAgent>();
             foreach (var item in agents.EnumerateArray())
@@ -67,7 +81,11 @@ public sealed class CliToolApiClient : IDisposable
                     Bool(item, "installed"),
                     Text(item, "path"),
                     Text(item, "version"),
-                    Text(item, "baseUrl")));
+                    FirstText(item, "baseUrl", "base_url"),
+                    FirstText(item, "apiKey", "api_key", "key", "token"),
+                    FirstText(item, "authentication", "auth", "login"),
+                    FirstText(item, "usage", "quota", "credits"),
+                    ReadModelIds(item, "models")));
             }
 
             return result;
@@ -91,17 +109,16 @@ public sealed class CliToolApiClient : IDisposable
         try
         {
             using var document = JsonDocument.Parse(body);
-            if (!document.RootElement.TryGetProperty("probe", out var probe) || probe.ValueKind != JsonValueKind.Object)
+            var probe = document.RootElement.TryGetProperty("probe", out var nested) && nested.ValueKind == JsonValueKind.Object
+                ? nested
+                : document.RootElement;
+            if (probe.ValueKind != JsonValueKind.Object || (!probe.TryGetProperty("ok", out _) && !probe.TryGetProperty("models", out _)))
                 return new(false, [], "", "The CLI Tool API probe response had no probe object.");
-            var models = new List<string>();
-            if (probe.TryGetProperty("models", out var list) && list.ValueKind == JsonValueKind.Array)
-                foreach (var item in list.EnumerateArray())
-                    if (item.ValueKind == JsonValueKind.String && item.GetString() is { } model && ModelId.IsMatch(model))
-                        models.Add(model);
-            var ok = Bool(probe, "ok");
+            var models = ReadModelIds(probe, "models");
+            var ok = Bool(probe, "ok") || (!probe.TryGetProperty("ok", out _) && models.Length > 0);
             var error = Text(probe, "error");
             var detail = Text(probe, "detail");
-            return new(ok, models.Distinct(StringComparer.Ordinal).ToArray(), detail, error);
+            return new(ok, models, detail, error);
         }
         catch (JsonException)
         {
@@ -145,15 +162,45 @@ public sealed class CliToolApiClient : IDisposable
     private static string Text(JsonElement item, string name) =>
         item.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
 
+    private static string FirstText(JsonElement item, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            var value = Text(item, name);
+            if (value.Length > 0)
+                return value;
+        }
+        return "";
+    }
+
+    private static string[] ReadModelIds(JsonElement item, string name)
+    {
+        if (!item.TryGetProperty(name, out var list) || list.ValueKind != JsonValueKind.Array)
+            return [];
+        var models = new List<string>();
+        foreach (var entry in list.EnumerateArray())
+        {
+            var id = entry.ValueKind == JsonValueKind.String ? entry.GetString()
+                : entry.ValueKind == JsonValueKind.Object ? FirstText(entry, "id", "name", "model")
+                : null;
+            if (!string.IsNullOrWhiteSpace(id) && ModelId.IsMatch(id))
+                models.Add(id);
+        }
+
+        return models.Distinct(StringComparer.Ordinal).ToArray();
+    }
+
     private static bool Bool(JsonElement item, string name) =>
         item.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.True;
 
     public void Dispose() => http.Dispose();
 }
 
-public sealed class CliToolProviderDiscovery(IReadOnlyList<IAIProvider> providers, CliToolApiClient client)
+public sealed class CliToolProviderDiscovery(IList<IAIProvider> providers, CliToolApiClient client)
 {
     private static readonly string[] SpecialProviderIds = ["custom-cli", "responses-api", "ollama"];
+    // Built-in backup CLIs detected directly when the external CLI Tool API is unreachable.
+    private static readonly string[] BackupCliIds = ["claude", "codex", "antigravity"];
     // Registered by the CLI Tool API but not an AI agent: the Cloudflare resource CLI (cf).
     private static readonly HashSet<string> NonAiAgentIds = new(StringComparer.OrdinalIgnoreCase) { "cloudflare" };
     private static readonly Regex SafeAgentId = new("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", RegexOptions.CultureInvariant);
@@ -188,16 +235,17 @@ public sealed class CliToolProviderDiscovery(IReadOnlyList<IAIProvider> provider
         var previous = new Dictionary<string, ProviderSettings>(StringComparer.OrdinalIgnoreCase);
         foreach (var provider in settings.Providers)
             previous.TryAdd(provider.Id, provider);
-        var installed = agents
-            .Where(agent => agent.Installed && SafeAgentId.IsMatch(agent.Id) && !SpecialProviderIds.Contains(agent.Id, StringComparer.OrdinalIgnoreCase) && !NonAiAgentIds.Contains(agent.Id))
+        var validAgents = agents
+            .Where(agent => SafeAgentId.IsMatch(agent.Id) && !SpecialProviderIds.Contains(agent.Id, StringComparer.OrdinalIgnoreCase) && !NonAiAgentIds.Contains(agent.Id))
             .Select(agent => agent with { Id = CliProvider.NormalizeId(agent.Id) })
             .DistinctBy(agent => agent.Id, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var installed = validAgents.Where(agent => agent.Installed).ToArray();
 
         // The agent list is the source of truth for CLI providers: one settings row per installed
         // agent means the Settings toggles and provider picker follow however many agents exist.
         var next = new List<ProviderSettings>();
-        foreach (var agent in installed)
+        foreach (var agent in validAgents)
         {
             var config = previous.TryGetValue(agent.Id, out var existing) ? existing : new ProviderSettings { Id = agent.Id };
             config.Id = agent.Id;
@@ -209,6 +257,8 @@ public sealed class CliToolProviderDiscovery(IReadOnlyList<IAIProvider> provider
                 config.Executable = agent.Path;
             if (config.ResponsesApiBaseUrl.Length == 0 && Uri.TryCreate(agent.BaseUrl, UriKind.Absolute, out var baseAddress) && baseAddress.Scheme is "http" or "https")
                 config.ResponsesApiBaseUrl = agent.BaseUrl;
+            if (config.ProtectedResponsesApiKey.Length == 0 && agent.ApiKey.Length > 0)
+                config.ProtectedResponsesApiKey = SecretProtection.Protect(agent.ApiKey);
             next.Add(config);
         }
 
@@ -218,7 +268,7 @@ public sealed class CliToolProviderDiscovery(IReadOnlyList<IAIProvider> provider
         settings.ProvidersManagedByCliToolApi = true;
 
         var health = new List<ProviderHealth>();
-        foreach (var agent in installed)
+        foreach (var agent in validAgents)
         {
             var canWrite = agent.Id is not ("freebuff" or "commandcode" or "clixad");
             var version = string.IsNullOrWhiteSpace(agent.Version) ? "" : " · " + agent.Version;
@@ -226,14 +276,27 @@ public sealed class CliToolProviderDiscovery(IReadOnlyList<IAIProvider> provider
             {
                 var provider = providers.OfType<CliProvider>().FirstOrDefault(p => p.Id.Equals(agent.Id, StringComparison.OrdinalIgnoreCase));
                 var ready = provider?.ApplyApiDetection(agent.Path) == true;
+                var auth = string.IsNullOrWhiteSpace(agent.Authentication) ? "Unknown" : agent.Authentication;
+                var usage = string.IsNullOrWhiteSpace(agent.Usage) ? "Unknown" : agent.Usage;
                 health.Add(new(agent.Id, true, ready, ready && canWrite, ready
-                    ? "Detected by CLI Tool API" + version + ". Headless flags were not re-probed; authentication and quota are unknown."
-                    : "CLI Tool API reports this agent installed, but the manager could not resolve a launchable executable. Configure its path in provider settings."));
+                    ? "Detected by CLI Tool API" + version + ". Headless flags were not re-probed; authentication: " + auth + "; usage: " + usage + "."
+                    : "CLI Tool API reports this agent installed, but the manager could not resolve a launchable executable. Configure its path in provider settings.",
+                    auth, usage));
+            }
+            else if (Uri.TryCreate(agent.BaseUrl, UriKind.Absolute, out _))
+            {
+                EnsureEndpointProvider(agent.Id);
+                var config = settings.Providers.First(p => p.Id.Equals(agent.Id, StringComparison.OrdinalIgnoreCase));
+                var ready = agent.Installed && !string.IsNullOrWhiteSpace(config.ProtectedResponsesApiKey);
+                health.Add(new(agent.Id, agent.Installed, ready, false,
+                    ready ? "OpenAI-compatible endpoint from CLI Tool API" : "Agent exposes a URL but no usable API key was supplied; configure its key in provider settings.",
+                    string.IsNullOrWhiteSpace(agent.Authentication) ? (ready ? "Configured" : "Unknown") : agent.Authentication,
+                    string.IsNullOrWhiteSpace(agent.Usage) ? "Unknown" : agent.Usage));
             }
             else if (CliProvider.IsDetectedOnly(agent.Id))
                 health.Add(new(agent.Id, true, false, false, "Detected by CLI Tool API" + version + ". This manager intentionally does not execute it headlessly."));
             else
-                health.Add(new(agent.Id, true, false, false, "Detected by CLI Tool API" + version + ". No execution adapter is available for this agent in this manager."));
+                health.Add(new(agent.Id, agent.Installed, false, false, "Detected by CLI Tool API" + version + ". No execution adapter is available for this agent in this manager."));
         }
 
         var probed = await ApplyProbeModelsAsync(baseUri!, token, installed, settings, cancellationToken);
@@ -241,15 +304,40 @@ public sealed class CliToolProviderDiscovery(IReadOnlyList<IAIProvider> provider
         await DetectSpecialProvidersAsync(settings, health, cancellationToken);
 
         var usable = health.Count(h => h.CanExecute);
-        var detail = $"CLI Tool API {url}: {agents.Count} agents tracked, {installed.Length} installed, {usable} usable by this manager.";
+        var detail = $"CLI Tool API {url}: {validAgents.Length} agents tracked, {installed.Length} installed, {usable} usable by this manager.";
         return new(true, health, agents.Count, installed.Length, usable, detail);
+    }
+
+    private void EnsureEndpointProvider(string id)
+    {
+        if (providers.Any(p => p.Id.Equals(id, StringComparison.OrdinalIgnoreCase)))
+            return;
+        providers.Add(new ResponsesApiProvider(id));
     }
 
     private async Task<CliToolDiscoveryResult> UnreachableAsync(string detail, ManagerSettings settings, CancellationToken cancellationToken)
     {
         var health = new List<ProviderHealth>();
+        EnsureBackupProviders(settings);
+        await DetectProvidersAsync(BackupCliIds, settings, health, cancellationToken);
         await DetectSpecialProvidersAsync(settings, health, cancellationToken);
-        return new(false, health, 0, 0, health.Count(h => h.CanExecute), detail);
+        var backupReady = health.Where(h => BackupCliIds.Contains(h.Id, StringComparer.OrdinalIgnoreCase) && h.CanExecute).Select(h => h.Id).ToArray();
+        var summary = backupReady.Length > 0
+            ? $"{detail} Backup CLIs ready: {string.Join(", ", backupReady)}."
+            : $"{detail} Backup CLIs checked: {string.Join(", ", BackupCliIds)}.";
+        return new(false, health, BackupCliIds.Length + SpecialProviderIds.Length, health.Count(h => h.Installed), health.Count(h => h.CanExecute), summary);
+    }
+
+    private void EnsureBackupProviders(ManagerSettings settings)
+    {
+        var runner = new ProcessRunner();
+        foreach (var id in BackupCliIds)
+        {
+            if (!settings.Providers.Any(p => p.Id.Equals(id, StringComparison.OrdinalIgnoreCase)))
+                settings.Providers.Add(new ProviderSettings { Id = id, DisplayName = id == "antigravity" ? "Antigravity" : char.ToUpperInvariant(id[0]) + id[1..] });
+            if (!providers.Any(p => p.Id.Equals(id, StringComparison.OrdinalIgnoreCase)))
+                providers.Add(new CliProvider(id, runner));
+        }
     }
 
     // Enables exactly the agents the CLI Tool API reports as runnable; providers the user switched
@@ -322,7 +410,31 @@ public sealed class CliToolProviderDiscovery(IReadOnlyList<IAIProvider> provider
             var config = settings.Providers.FirstOrDefault(p => string.Equals(p.Id, agent.Id, StringComparison.OrdinalIgnoreCase));
             if (config == null)
                 continue;
-            if (!probes.TryGetValue(agent.Id, out var probe) || probe == null)
+            if (CliProvider.HasAccountAwareCatalog(agent.Id))
+            {
+                config.ModelDiscoveryStatus = "Model catalog is read from the CLI so only models this account can run are kept.";
+                config.ModelCatalogCheckedAt = DateTimeOffset.UtcNow;
+                continue;
+            }
+
+            probes.TryGetValue(agent.Id, out var probe);
+            if (probe is { Ok: true, Models.Count: > 0 })
+            {
+                ModelCatalogMerge.ApplyEligible(config, probe.Models.Select(id => new ModelInfo(id, Enum.GetValues<WorkKind>(), DiscoverySource: "CLI Tool API probe; account access unverified")).ToArray());
+                config.ModelDiscoveryStatus = $"{probe.Models.Count} models from the CLI Tool API probe.";
+                fromProbe.Add(agent.Id);
+                continue;
+            }
+
+            if (agent.Models is { Count: > 0 })
+            {
+                ModelCatalogMerge.ApplyEligible(config, agent.Models.Select(id => new ModelInfo(id, Enum.GetValues<WorkKind>(), DiscoverySource: "CLI Tool API agent list; account access unverified")).ToArray());
+                config.ModelDiscoveryStatus = $"{agent.Models.Count} models from the CLI Tool API agent list.";
+                fromProbe.Add(agent.Id);
+                continue;
+            }
+
+            if (probe == null)
             {
                 config.ModelDiscoveryStatus = "CLI Tool API build has no model probe endpoint; add an exact model ID manually or update aihub.";
                 config.ModelCatalogCheckedAt = DateTimeOffset.UtcNow;
@@ -336,27 +448,10 @@ public sealed class CliToolProviderDiscovery(IReadOnlyList<IAIProvider> provider
                 continue;
             }
 
-            if (probe.Models.Count == 0)
-            {
-                config.ModelDiscoveryStatus = string.IsNullOrWhiteSpace(probe.Detail)
-                    ? "CLI Tool API returned no models. Configure a base URL for this agent or add an exact ID manually."
-                    : probe.Detail;
-                config.ModelCatalogCheckedAt = DateTimeOffset.UtcNow;
-                continue;
-            }
-
-            // These CLIs know which models this account may run; their own listing (read below) is the
-            // eligibility source, so the generic probe catalog is never merged for them.
-            if (CliProvider.HasAccountAwareCatalog(agent.Id))
-            {
-                config.ModelDiscoveryStatus = "Model catalog is read from the CLI so only models this account can run are kept.";
-                config.ModelCatalogCheckedAt = DateTimeOffset.UtcNow;
-                continue;
-            }
-
-            ModelCatalogMerge.ApplyEligible(config, probe.Models.Select(id => new ModelInfo(id, Enum.GetValues<WorkKind>(), DiscoverySource: "CLI Tool API probe; account access unverified")).ToArray());
-            config.ModelDiscoveryStatus = $"{probe.Models.Count} models from the CLI Tool API probe.";
-            fromProbe.Add(agent.Id);
+            config.ModelDiscoveryStatus = string.IsNullOrWhiteSpace(probe.Detail)
+                ? "CLI Tool API returned no models. Configure a base URL for this agent or add an exact ID manually."
+                : probe.Detail;
+            config.ModelCatalogCheckedAt = DateTimeOffset.UtcNow;
         }
 
         return fromProbe;
@@ -403,12 +498,15 @@ public sealed class CliToolProviderDiscovery(IReadOnlyList<IAIProvider> provider
         }
     }
 
-    private async Task DetectSpecialProvidersAsync(ManagerSettings settings, List<ProviderHealth> health, CancellationToken cancellationToken)
+    private Task DetectSpecialProvidersAsync(ManagerSettings settings, List<ProviderHealth> health, CancellationToken cancellationToken) =>
+        DetectProvidersAsync(SpecialProviderIds, settings, health, cancellationToken);
+
+    private async Task DetectProvidersAsync(IReadOnlyList<string> ids, ManagerSettings settings, List<ProviderHealth> health, CancellationToken cancellationToken)
     {
-        foreach (var id in SpecialProviderIds)
+        foreach (var id in ids)
         {
-            var provider = providers.FirstOrDefault(p => p.Id == id);
-            var config = settings.Providers.FirstOrDefault(p => p.Id == id);
+            var provider = providers.FirstOrDefault(p => p.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+            var config = settings.Providers.FirstOrDefault(p => p.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
             if (provider == null || config == null)
                 continue;
             try
@@ -422,7 +520,10 @@ public sealed class CliToolProviderDiscovery(IReadOnlyList<IAIProvider> provider
                     try
                     {
                         var models = await provider.ListModelsAsync(timeout.Token);
-                        ModelCatalogMerge.Apply(config, models);
+                        if (CliProvider.HasAccountAwareCatalog(id))
+                            ModelCatalogMerge.ApplyEligible(config, models);
+                        else
+                            ModelCatalogMerge.Apply(config, models);
                         config.ModelDiscoveryStatus = (provider as IModelCatalogStatus)?.ModelDiscoveryDetail
                             ?? $"{models.Count} installed local models from runtime metadata.";
                     }

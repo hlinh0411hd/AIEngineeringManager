@@ -320,9 +320,11 @@ public static class ProviderErrors
     // Only the provider's failing process can trigger fallback. Successful generated content cannot.
     public static FailureKind Classify(int exitCode, string output)
     {
+        var s = output.ToLowerInvariant();
+        if (s.Contains("jetski: no output produced") || s.Contains("headless mode cannot prompt for"))
+            return FailureKind.Unavailable;
         if (exitCode == 0)
             return FailureKind.None;
-        var s = output.ToLowerInvariant();
         // The model's own safety filter declined this prompt. Another model can usually do the step.
         if (new[]
         {

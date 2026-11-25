@@ -95,6 +95,77 @@ public partial class MainWindow
         }
     }
 
+    // How long a task must stay in a stop state before Telegram hears about it, so a change that is undone at once sends nothing.
+    private static readonly TimeSpan TelegramStopSettle = TimeSpan.FromSeconds(30);
+    private readonly Dictionary<string, (string Key, DateTimeOffset Since)> telegramStopSince = [];
+    private System.Windows.Threading.DispatcherTimer? telegramStopTimer;
+
+    // A stop is a state the task does not leave by itself: it is done, needs the person, or was halted.
+    // Waiting for an AI is not one of them while the session still runs: the manager retries by itself.
+    private bool IsTelegramStop(WorkItem work) => work.State is WorkState.Completed or WorkState.NeedsReview or WorkState.Failed
+        or WorkState.Paused or WorkState.AwaitingApproval or WorkState.WaitingForPermission or WorkState.WrongAccess or WorkState.WrongProject
+        || work.State == WorkState.WaitingForProvider && unified.SessionFor(work) is { State: SessionState.Paused or SessionState.Stopped or SessionState.BudgetReached or SessionState.Completed };
+
+    // One Telegram message per stop, whatever caused it (done, failed, needs you, out of AI). Running, queued and
+    // retrying changes send nothing: a stop only counts once it holds, and a new message needs a new stop.
+    private void ConsiderTelegram()
+    {
+        if (telegram == null || !settings.Telegram.Enabled || noticeJournal == null)
+            return;
+        EnsureTelegramTimer();
+        var tasks = store.WorkItems().Where(TelegramTaskActions.IsTopLevel).ToArray();
+        // The first run after this feature was added marks the tasks that are already stopped as reported, so
+        // their old stops are not sent again.
+        var seeding = !noticeJournal.TelegramSeeded;
+        var now = DateTimeOffset.UtcNow;
+        var due = new List<StopNotice>();
+        var changed = !noticeJournal.TelegramSeeded;
+        foreach (var work in tasks)
+        {
+            if (!IsTelegramStop(work))
+            {
+                changed |= noticeJournal.TelegramSent.Remove(work.Id);
+                telegramStopSince.Remove(work.Id);
+                continue;
+            }
+            var decisions = unified.Decisions(work).Select(d => d.Id).Order().ToArray();
+            var key = TaskStopNotices.Signature(work, decisions);
+            if (noticeJournal.TelegramSent.TryGetValue(work.Id, out var sent) && sent == key)
+                continue;
+            if (seeding)
+            {
+                noticeJournal.TelegramSent[work.Id] = key;
+                changed = true;
+                continue;
+            }
+            if (!telegramStopSince.TryGetValue(work.Id, out var since) || since.Key != key)
+            {
+                telegramStopSince[work.Id] = (key, now);
+                continue;
+            }
+            if (now - since.Since < TelegramStopSettle)
+                continue;
+            // An empty previous signature makes Evaluate report the stop even for a task seen for the first time.
+            if (TaskStopNotices.Evaluate(work, decisions, "") is { } notice)
+                due.Add(notice);
+            noticeJournal.TelegramSent[work.Id] = key;
+            changed = true;
+        }
+        noticeJournal.TelegramSeeded = true;
+        if (changed)
+            SaveNotifications();
+        NotifyTelegram(due);
+    }
+
+    private void EnsureTelegramTimer()
+    {
+        if (telegramStopTimer != null)
+            return;
+        telegramStopTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        telegramStopTimer.Tick += (_, _) => ConsiderTelegram();
+        telegramStopTimer.Start();
+    }
+
     // Sends fresh stop notices to Telegram without blocking the UI thread. NotifyAsync never throws.
     private void NotifyTelegram(IEnumerable<StopNotice> notices)
     {

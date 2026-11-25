@@ -41,7 +41,62 @@ public sealed class ConnectedTool
     public DateTimeOffset? CheckedAt { get; set; }
 }
 
+// Planners write a tool step either with the stored names (toolId, skillId) or with the short ones the
+// planner prompt also shows (id, skill). Both are read; the stored form is written.
+[System.Text.Json.Serialization.JsonConverter(typeof(ToolTaskSpecJsonConverter))]
 public sealed record ToolTaskSpec(string ToolId, string SkillId, string Operation, JsonObject? Input = null, string? InputFrom = null);
+
+public sealed class ToolTaskSpecJsonConverter : System.Text.Json.Serialization.JsonConverter<ToolTaskSpec>
+{
+    public override ToolTaskSpec? Read(ref System.Text.Json.Utf8JsonReader reader, Type typeToConvert, System.Text.Json.JsonSerializerOptions options)
+    {
+        if (reader.TokenType == System.Text.Json.JsonTokenType.Null)
+            return null;
+        using var document = System.Text.Json.JsonDocument.ParseValue(ref reader);
+        var root = document.RootElement;
+        if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
+            return null;
+        string? Text(params string[] names)
+        {
+            foreach (var property in root.EnumerateObject())
+                if (names.Any(name => string.Equals(name, property.Name, StringComparison.OrdinalIgnoreCase)) && property.Value.ValueKind == System.Text.Json.JsonValueKind.String)
+                    return property.Value.GetString();
+            return null;
+        }
+        JsonObject? input = null;
+        foreach (var property in root.EnumerateObject())
+            if (string.Equals(property.Name, "input", StringComparison.OrdinalIgnoreCase) && property.Value.ValueKind == System.Text.Json.JsonValueKind.Object)
+                input = JsonNode.Parse(property.Value.GetRawText()) as JsonObject;
+        return new ToolTaskSpec(Text("ToolId", "toolId", "id")!, Text("SkillId", "skillId", "skill")!, Text("Operation", "operation")!, input, Text("InputFrom", "inputFrom"));
+    }
+
+    public override void Write(System.Text.Json.Utf8JsonWriter writer, ToolTaskSpec value, System.Text.Json.JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        WriteText(writer, "ToolId", value.ToolId);
+        WriteText(writer, "SkillId", value.SkillId);
+        WriteText(writer, "Operation", value.Operation);
+        // Every property is written, null included, exactly as the default serializer does: the tool binding
+        // hash of a saved step is computed from this JSON, and a changed shape would refuse to resume it.
+        if (value.Input is { } input)
+        {
+            writer.WritePropertyName("Input");
+            input.WriteTo(writer);
+        }
+        else
+            writer.WriteNull("Input");
+        WriteText(writer, "InputFrom", value.InputFrom);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteText(System.Text.Json.Utf8JsonWriter writer, string name, string? text)
+    {
+        if (text == null)
+            writer.WriteNull(name);
+        else
+            writer.WriteString(name, text);
+    }
+}
 // What the tool task form submits: the task request, the tool and its settings as chosen in the
 // form, and the files they refer to.
 public sealed record ToolTaskForm(string ProjectId, string ToolId, string Operation, JsonObject Input, IReadOnlyList<WorkAttachment> Attachments, string Request, JsonObject? FirstInput = null);

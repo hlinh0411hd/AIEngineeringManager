@@ -109,6 +109,12 @@ if (args.FirstOrDefault() == "--telegram")
     return TelegramChecks.Run();
 if (args.FirstOrDefault() == "--git-push")
     return await GitAutoPushChecks.Run();
+if (args.FirstOrDefault() == "--web-ratings")
+    return await WebRatingsChecks.Run();
+if (args.FirstOrDefault() == "--milestone-tool")
+    return MilestoneToolChecks.Run();
+if (args.FirstOrDefault() == "--pixel-cli-order")
+    return PixelCliOrderChecks.Run();
 if (args.FirstOrDefault() == "--task-access")
     return TaskAccessChecks.Run();
 if (args.FirstOrDefault() == "--task-lifecycle")
@@ -475,6 +481,9 @@ await Group("--step-skip", StepSkipChecks.Run);
 await Group("--task-comments", () => Task.FromResult(TaskCommentChecks.Run()));
 await Group("--task-queue", TaskQueueChecks.Run);
 await Group("--project-scan", () => Task.FromResult(ProjectScanChecks.Run()));
+await Group("--web-ratings", WebRatingsChecks.Run);
+await Group("--milestone-tool", () => Task.FromResult(MilestoneToolChecks.Run()));
+await Group("--pixel-cli-order", () => Task.FromResult(PixelCliOrderChecks.Run()));
 await Group("--acceptance", AcceptanceChecks.Run);
 Console.WriteLine($"RESULT: {Harness.Passed} passed, {Harness.Failed} failed. Test data: {Harness.root}");
 return Harness.Failed == 0 ? 0 : 1;

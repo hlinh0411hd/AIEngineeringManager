@@ -71,22 +71,6 @@ public partial class MainWindow
             button.Content = content;
             button.HorizontalContentAlignment = HorizontalAlignment.Stretch;
         }
-
-        TaskModeButton.Content = ModeContent("home", "Task Mode");
-        AutonomousModeButton.Content = ModeContent("rocket", "Autonomous");
-        ShellAway.Content = ModeContent("coffee", "Away Mode");
-    }
-
-    private static FrameworkElement ModeContent(string icon, string label)
-    {
-        var row = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Center
-        };
-        row.Children.Add(UiArt.Icon(icon, 21));
-        row.Children.Add(new TextBlock { Text = label, Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, FontSize = 13 });
-        return row;
     }
 
     private void RefreshNavigationCounts(IReadOnlyList<WorkItem> goals)

@@ -147,10 +147,16 @@ public sealed class ModelRouter(IReadOnlyList<ModelReliability>? reliability = n
 
         // Claude and Codex first: the other AIs only run a step when neither can (out of usage, not
         // signed in, disabled, no permission). Qualified local AI (Ollama) stays eligible.
+        // Exception: for small tasks (difficulty <= 35) in Auto + priority mode, allow an eligible
+        // free-tier rung capped at <= 35 before falling back to paid PrimaryProviders.
         var primary = settings.PrimaryProviders ?? [];
         var tierNote = "";
-        if (explicitChoice == null && primary.Count > 0 && candidates.Any(c => primary.Contains(c.p.Id)))
+        var preferFreeSmall = explicitChoice == null && settings.UsePriorityLists && settings.UsageLevel == UsageLevel.Auto && difficulty <= 35
+            && HasSmallFreePriorityCandidate(work, capability, difficulty, candidates, primary);
+        if (!preferFreeSmall && explicitChoice == null && primary.Count > 0 && candidates.Any(c => primary.Contains(c.p.Id)))
             candidates = candidates.Where(c => c.p.Id == "ollama" || primary.Contains(c.p.Id)).ToArray();
+        else if (preferFreeSmall)
+            tierNote = "small task: using free resettable model before paid primary; ";
         else if (explicitChoice == null && primary.Count > 0 && candidates.Length > 0)
             tierNote = $"fallback AI: {string.Join(" and ", primary)} cannot run this step now; ";
         // A review is done by another provider than the one that wrote the work (else another model).
@@ -240,6 +246,24 @@ public sealed class ModelRouter(IReadOnlyList<ModelReliability>? reliability = n
 
         var reason = tierNote + reviewNote + (compatible ? $"Compatible role: permitted Coding model handles {work.Kind} with already approved {work.Access}; no project access or model catalog changed. " : "");
         return best is null ? null : new(best.p.Id, best.m.Id, reason + $"Rule-based: kind={work.Kind}; capability={capability}; difficulty={difficulty}/100 ({effort}){(work.Reworks + work.Escalations > 0 ? $", raised from {baseDifficulty} after {work.Reworks} send-back(s) and {work.Escalations} escalation(s)" : "")}; usage level={level}; required {capability} quality={required}; " + (best.m.RoleRank(work.Kind) == 2 ? "manual primary role; " : best.Quality == 0 ? "no permitted worker can do " + capability + "; " : how + "; ") + $"quality={best.Quality}; usage rank={best.Cost}; first-try acceptance≈{best.Chance:P0}; expected usage={best.Expected:F0}; priority={best.p.Priority}; rating={best.m.RatingSource}. Approvals and send-backs for this model and work type refine the estimate. No AI call.");
+    }
+
+    private static bool HasSmallFreePriorityCandidate(WorkItem work, WorkCapability capability, int difficulty, dynamic[] candidates, IReadOnlyList<string> primary)
+    {
+        var orderType = work.Kind == WorkKind.Review && capability != WorkCapability.ImageUnderstanding ? WorkCapability.Review : capability;
+        foreach (var rung in ModelRatings.PriorityFor(orderType))
+        {
+            if (rung.MaxDifficulty > 35 || rung.MaxDifficulty < difficulty)
+                continue;
+            if (primary.Contains(rung.ProviderId, StringComparer.OrdinalIgnoreCase))
+                return false;
+            foreach (var c in candidates)
+                if (c.p.Id == rung.ProviderId && string.Equals((string)c.m.Id, rung.ModelId, StringComparison.OrdinalIgnoreCase)
+                    && c.Quality > 0 && c.Meets && !work.RejectedRoutes.Contains(c.p.Id + "|" + c.m.Id))
+                    return true;
+        }
+
+        return false;
     }
 
     // The one routing decision every flow uses (run, resume, approval, planning, assignment). A

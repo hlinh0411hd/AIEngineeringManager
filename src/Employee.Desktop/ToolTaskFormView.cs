@@ -274,7 +274,7 @@ public sealed class ToolTaskFormView : UserControl
             if (actions.Contains("create") && actions.Contains("animation")) actions.Insert(actions.IndexOf("animation") + 1, "create+animation");
             Fill(action, actions.Select(a => (a, ActionLabels.GetValueOrDefault(a, a))), "animation");
             Fill(artMode, (choices.AutoArtMode ? new[] { ("auto", "Auto detect") } : []).Concat(choices.CanvasMax.Keys.Select(k => (k, k == "pixel" ? "Pixel art" : k == "illustration" ? "Illustration" : k))), choices.DefaultArtMode);
-            Fill(provider, new[] { ("codex", "Codex CLI") }.Concat(choices.Providers.Contains("claude") ? [("claude", "Claude CLI (draws by code)")] : Array.Empty<(string, string)>()).Concat(choices.Providers.Contains("pixellab") ? [("pixellab", "PixelLab API (pixel-art model)")] : Array.Empty<(string, string)>()).Concat(choices.ApiImageModels.Keys.Select(v => ("api:" + v, "API · " + (v == "openai" ? "OpenAI" : v == "gemini" ? "Gemini" : v)))), "codex");
+            Fill(provider, new[] { ("codex", "Codex CLI") }.Concat(choices.Providers.Contains("pixellab") ? [("pixellab", "PixelLab API (pixel-art model)")] : Array.Empty<(string, string)>()).Concat(choices.ApiImageModels.Keys.Select(v => ("api:" + v, "API · " + (v == "openai" ? "OpenAI" : v == "gemini" ? "Gemini" : v)))), "codex");
             Fill(direction, choices.Directions.Select(d => (d, d + " · " + Compass(d))), choices.DefaultDirection);
             var sizes = new[] { 16, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024 }.Where(s => s >= choices.CanvasMin && s <= choices.CanvasMax.Values.Max()).Select(s => (s.ToString(), s.ToString())).ToArray();
             Fill(width, sizes, choices.DefaultWidth.ToString());
@@ -395,7 +395,7 @@ public sealed class ToolTaskFormView : UserControl
                     input["autoRetry"] = autoFix.IsChecked == true;
                     input["autoSwitch"] = autoSwitch.IsChecked == true;
                     if (autoSwitch.IsChecked == true && paidFallback.IsChecked == true) input["fallbackToApi"] = true;
-                    if (Selected(provider) is "claude" or "pixellab") input["provider"] = Selected(provider);
+                    if (Selected(provider) is "pixellab") input["provider"] = Selected(provider);
                     if (Selected(provider) is { } p && p.StartsWith("api:"))
                     {
                         input["provider"] = "api";

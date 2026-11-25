@@ -472,6 +472,15 @@ static class AcceptanceChecks
         // Seen live: "Each frame is exactly 64x64 pixels; output one horizontal 256x64 PNG sheet" with outputWidth 256 → four 256x64 frames.
         var sheetSized = Done(new() { ["action"] = "animation", ["image"] = img, ["frames"] = 4, ["outputWidth"] = 256, ["outputHeight"] = 64, ["prompt"] = "Create only a 4-frame one-shot peck animation for the existing Common goose. Each frame is exactly 64x64 pixels; output one horizontal 256x64 PNG sheet." });
         Assert(sheetSized["outputWidth"]!.GetValue<int>() == 64 && sheetSized["outputHeight"]!.GetValue<int>() == 64, "An animation's size is per frame, as the brief states: " + sheetSized.ToJsonString());
+        // Seen live: a create brief "64x64" with the form or planner at 16x16 made a 16x16 still.
+        var stillSized = Done(new() { ["action"] = "create", ["prompt"] = "A coin icon. Each frame is exactly 64x64 pixels.", ["outputWidth"] = 16, ["outputHeight"] = 16 });
+        Assert(stillSized["outputWidth"]!.GetValue<int>() == 64 && stillSized["outputHeight"]!.GetValue<int>() == 64, "A create's size is the size its brief states: " + stillSized.ToJsonString());
+        var gridSized = Done(new() { ["action"] = "create", ["prompt"] = "A 4x2 grid sheet of 64x64 cells, 256x128 total", ["outputWidth"] = 256, ["outputHeight"] = 128 });
+        Assert(gridSized["outputWidth"]!.GetValue<int>() == 256 && gridSized["outputHeight"]!.GetValue<int>() == 128, "A create that describes a grid keeps its sheet size: " + gridSized.ToJsonString());
+        // The tool gets the user's whole request with the step prompt, not only the planner's condensed one.
+        var fullInput = new System.Text.Json.Nodes.JsonObject { ["action"] = "create", ["prompt"] = "Coin icon, gold", ["outputWidth"] = 64, ["outputHeight"] = 64 };
+        ToolTaskExecutor.FinishPixelRequest(fullInput, PixelToolOptions.Read(new ConnectedTool { Name = "Pixel Art" }), "Coin icon", presetApplied: true, goalText: null, fullBrief: "Make a 64x64 coin icon, gold theme, pixel art, dark background");
+        Assert(fullInput["prompt"]!.GetValue<string>().Contains("gold theme, pixel art, dark background", StringComparison.Ordinal), "The tool prompt carries the whole user request: " + fullInput.ToJsonString());
         Assert(PixelRequest.FrameSize("one horizontal 256x64 PNG sheet") == null && PixelRequest.FrameSize("8 frames of 32×32") == (32, 32) && PixelRequest.FrameSize("mỗi khung 48x48") == (48, 48), "A sheet size is not a frame size");
 
         // Seen live: a repair plan animated "the attached bfb0….png", an image the manager had posted on the task.
@@ -693,9 +702,9 @@ static class AcceptanceChecks
             RedoStep("z1", WorkState.Queued, kept.Id);
             var redoFlow = new UnifiedTaskService(redoDb, redoDb, new Orchestrator(redoDb, [], new NullRunner()), new NullRunner());
             Assert(redoFlow.SupersedeEarlierSteps(redoDb.WorkItems().Single(w => w.Id == redoGoal.Id), redoSession, earlier) == 1
-                && redoDb.WorkItems().Single(w => w.Id == dead.Id).State == WorkState.Skipped && redoDb.WorkItems().Single(w => w.Id == kept.Id).State == WorkState.Queued
+                && !redoDb.WorkItems().Any(w => w.Id == dead.Id) && redoDb.WorkItems().Single(w => w.Id == kept.Id).State == WorkState.Queued
                 && redoDb.WorkItems().Single(w => w.Id == done.Id).State == WorkState.Completed && redoDb.Decisions(redoSession.Id).All(d => d.State != DecisionState.Pending),
-                "A redo closes the old unfinished steps it does not build on, with their decisions");
+                "A redo removes the old unfinished steps it does not build on, with their decisions");
         }
 
         // Seen live: the ZapBop preparation found no saved project and answered {"toolInputs":[]}; the step was
@@ -941,6 +950,20 @@ static class AcceptanceChecks
             Assert(TaskIntent.IsNewBuild(text) && UnifiedTaskService.NeedsPlan(text, WorkKind.Coding, PlanningPolicy.Auto) && TaskIntent.TryResolve(text, out var kind, out var access) && kind == WorkKind.Coding && access == AccessLevel.WriteProject, "New build not recognised: " + text);
         foreach (var text in new[] { "sửa lỗi nhảy trong game", "tạo sprite cho game", "review the game code", "nghiên cứu cơ chế làm cho game hay" })
             Assert(!TaskIntent.IsNewBuild(text), "Not a new build: " + text);
+        Assert(UnifiedTaskService.NeedsPlan("làm tiếp game này đi đủ các phần luôn", WorkKind.Coding, PlanningPolicy.Auto) && TaskIntent.TryResolve("làm tiếp game này đi đủ các phần luôn", out var contKind, out var contAccess) && contKind == WorkKind.Coding && contAccess == AccessLevel.WriteProject, "Continuing full game needs plan and resolves directly");
+        Assert(!UnifiedTaskService.NeedsPlan("thêm nút trong setting tool", WorkKind.Coding, PlanningPolicy.Auto) && WorkComplexity.Score(new WorkItem { Request = "thêm nút trong setting tool", Kind = WorkKind.Coding, Access = AccessLevel.WriteProject }) < WorkComplexity.LightBelow, "Small UI button task skips planning and stays Light");
+        var scopeDir = Path.Combine(Path.GetTempPath(), "ProjectScopeCheck_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(scopeDir, "docs"));
+        File.WriteAllText(Path.Combine(scopeDir, "docs", "DESIGN.md"), "# Game Design\nCore loop, enemies, shop, audio.");
+        using (var scopeDb = new SqliteStore(Path.Combine(scopeDir, "scope.db")))
+        {
+            scopeDb.SaveProject(new("gs", "GraveShift", scopeDir));
+            var goalItem = new WorkItem { ProjectId = "gs", Kind = WorkKind.Coding, Access = AccessLevel.WriteProject, Request = "làm tiếp đi" };
+            Assert(ProjectScope.ShouldPlan(scopeDb, scopeDb, goalItem, goalItem.Request, PlanningPolicy.Auto), "Short continuation in project with DESIGN.md triggers planning");
+            var smallItem = new WorkItem { ProjectId = "gs", Kind = WorkKind.Coding, Access = AccessLevel.WriteProject, Request = "thêm nút trong setting tool" };
+            Assert(!ProjectScope.ShouldPlan(scopeDb, scopeDb, smallItem, smallItem.Request, PlanningPolicy.Auto), "Small UI tweak in large project still skips planning");
+        }
+        try { Directory.Delete(scopeDir, true); } catch (IOException) { }
 
         // 1. A failure in milestone 1 is fixed and tested again; later scopes pass first time.
         var fixedRun = await Play("fix then pass", tester => tester != 1);

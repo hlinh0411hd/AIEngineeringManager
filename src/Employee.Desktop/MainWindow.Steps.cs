@@ -12,6 +12,14 @@ public sealed class StepNumberConverter : IValueConverter
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotSupportedException();
 }
 
+// When a step ran: "start → end" in local time, from its attempts' logs (empty until it has run).
+public sealed class StepTimeConverter : IValueConverter
+{
+    public Dictionary<string, string> Times { get; set; } = new(StringComparer.Ordinal);
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture) => value is string id && Times.TryGetValue(id, out var text) ? text : "not run yet";
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotSupportedException();
+}
+
 // The second line of a milestone group's header: what the milestone does, its status and progress.
 public sealed class MilestoneInfoConverter : IValueConverter
 {
@@ -33,9 +41,28 @@ public partial class MainWindow
     private static IReadOnlyList<WorkItem> OrderedSteps(IReadOnlyList<WorkItem> steps) =>
         steps.OrderBy(w => w.CreatedAt).ThenBy(w => w.PlanKey ?? "", StringComparer.Ordinal).ToArray();
 
+    // A step's first attempt starts at its first "Route" log, and its last attempt ends at its last "Execution" log.
+    private Dictionary<string, string> StepRunTimes(IReadOnlyList<WorkItem> steps)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var step in steps)
+        {
+            var logs = store.Logs(step.Id);
+            var starts = logs.Where(l => l.Event == "Route").Select(l => l.At).ToArray();
+            if (starts.Length == 0)
+                continue;
+            var ends = logs.Where(l => l.Event == "Execution").Select(l => l.At).ToArray();
+            var start = starts.Min().ToLocalTime();
+            var end = ends.Length > 0 ? ends.Max().ToLocalTime() : start;
+            result[step.Id] = $"{start:dd/MM HH:mm} → {end:dd/MM HH:mm}";
+        }
+        return result;
+    }
+
     private ListCollectionView StepsView(WorkItem goal, IReadOnlyList<WorkItem> steps)
     {
         ((StepNumberConverter)Resources["StepNumber"]).Numbers = steps.Select((w, i) => (w.Id, i + 1)).ToDictionary(x => x.Id, x => x.Item2, StringComparer.Ordinal);
+        ((StepTimeConverter)Resources["StepTime"]).Times = StepRunTimes(steps);
         var view = new ListCollectionView(steps.ToList());
         if (unified.SessionFor(goal) is not { Phases.Count: > 1 } session)
             return view;

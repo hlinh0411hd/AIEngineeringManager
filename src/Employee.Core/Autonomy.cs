@@ -99,6 +99,8 @@ public sealed class WorkSession
     public bool AllowDelegation { get; set; }
     public bool RunTestsAtBatchEnd { get; set; } = true;
     public bool RunTestsAtTaskEnd { get; set; }
+    // True when the current plan/update is a small user-verifiable tweak and should skip full auto-tests.
+    public bool SkipAutoTest { get; set; }
     // 0 = no limit (the default): a large task runs until its goal check says it is done.
     public int DurationMinutes { get; set; }
     public int MaxCalls { get; set; }
@@ -151,7 +153,9 @@ public sealed class WorkSession
 }
 
 public sealed record PlannedTask(string Key, string ProjectId, string Request, WorkKind Kind, AccessLevel Access, string[] DependsOn, Route? PreferredRoute = null, int Priority = 50, string? SkillId = null, ToolTaskSpec? Tool = null, WorkEffort Effort = WorkEffort.Auto, int? Difficulty = null, string? Capability = null,
-    [property: System.Text.Json.Serialization.JsonConverter(typeof(TextOrListConverter))] string? Acceptance = null);
+    [property: System.Text.Json.Serialization.JsonConverter(typeof(TextOrListConverter))] string? Acceptance = null,
+    // The milestone this step belongs to, numbered from 1 as in the plan's phases. Null: the plan's phase, or the open milestone.
+    int? Phase = null);
 
 // Planners write a step's acceptance as one sentence or as a list; both are read as text.
 public sealed class TextOrListConverter : System.Text.Json.Serialization.JsonConverter<string?>
@@ -190,7 +194,7 @@ public sealed class TextOrListConverter : System.Text.Json.Serialization.JsonCon
 // planned from the results so far. Done/Phase are the coordinator's answer to a goal check.
 // Acceptance: checkable statements that say when this milestone is acceptable.
 public sealed record PlanPhase(string Name, string Goal, string[]? Acceptance = null);
-public sealed record WorkPlan(string Summary, PlannedTask[] Tasks, PlanPhase[]? Phases = null, bool? Done = null, int? Phase = null, string[]? Acceptance = null);
+public sealed record WorkPlan(string Summary, PlannedTask[] Tasks, PlanPhase[]? Phases = null, bool? Done = null, int? Phase = null, string[]? Acceptance = null, bool? NeedsTest = null);
 public sealed class PlanRecord
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");

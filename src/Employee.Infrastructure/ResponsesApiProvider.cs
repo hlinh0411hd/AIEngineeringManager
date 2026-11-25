@@ -15,11 +15,18 @@ public sealed class ResponsesApiProvider : IAIProvider, IModelCatalogStatus, IDi
     private IReadOnlyList<ModelInfo> models = [];
     private bool ready;
 
-    public string Id => "responses-api";
+    public string Id { get; }
     public string ModelDiscoveryDetail { get; private set; } = "API endpoint has not been checked.";
 
-    public ResponsesApiProvider(HttpMessageHandler? handler = null)
+    public ResponsesApiProvider(HttpMessageHandler? handler = null) : this("responses-api", handler)
     {
+    }
+
+    public ResponsesApiProvider(string id, HttpMessageHandler? handler = null)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+            throw new ArgumentException("Provider ID is required.", nameof(id));
+        Id = id;
         http = new(handler ?? new HttpClientHandler { AllowAutoRedirect = false })
         {
             Timeout = Timeout.InfiniteTimeSpan

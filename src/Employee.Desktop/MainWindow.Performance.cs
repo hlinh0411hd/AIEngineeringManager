@@ -15,6 +15,12 @@ public partial class MainWindow
         ParallelAgents.Text = settings.Automation.MaxParallelAgents.ToString();
         RefreshPerformance();
         RatingsUrl.Text = settings.RatingsSourceUrl;
+        if (AutoRefreshWebRatings != null)
+        {
+            loading = true;
+            AutoRefreshWebRatings.IsChecked = settings.AutoUpdateWebRatings;
+            loading = false;
+        }
         LoadRatings();
         _ = RefreshRatingsIfStale();
     }
@@ -23,13 +29,25 @@ public partial class MainWindow
     {
         try
         {
-            RatingsStatus.Text = "Active ratings: " + ratings.Load();
+            var summary = ratings.Load();
+            RatingsStatus.Text = "Active ratings: " + summary;
+            UpdateWebRatingsBanner(summary);
         }
         catch (Exception error)when (error is InvalidOperationException or IOException or UnauthorizedAccessException)
         {
             ModelRatings.Apply(null);
             RatingsStatus.Text = "Ratings file not used (" + error.Message + "). Built-in ratings are active.";
+            UpdateWebRatingsBanner(ModelRatings.ActiveSource);
         }
+    }
+
+    private void UpdateWebRatingsBanner(string activeSummary)
+    {
+        if (WebRatingsBanner == null)
+            return;
+        var userRatedCount = settings.Providers.SelectMany(p => p.Models).Count(m => m.RatedByUser);
+        var agentModelCount = settings.Providers.Where(p => ManagerSettings.IsCli(p.Id)).SelectMany(p => p.Models).Count(m => !string.IsNullOrWhiteSpace(m.Id));
+        WebRatingsBanner.Text = $"Active ratings: {activeSummary} · {agentModelCount} catalog models · {userRatedCount} user-rated override(s)";
     }
 
     // A configured ratings URL is refreshed at most once a day; failures keep the current ratings.
@@ -49,6 +67,53 @@ public partial class MainWindow
         }
     }
 
+    // Background web ratings refresh when AutoUpdateWebRatings is enabled and ratings are stale.
+    private async void RefreshWebRatingsIfStale()
+    {
+        if (!settings.AutoUpdateWebRatings || !settings.UseAiCli)
+            return;
+        if (ratings.LastUpdated > DateTimeOffset.UtcNow.AddDays(-1))
+            return;
+        try
+        {
+            var sourceNames = string.Join(", ", WebModelRatingsUpdater.DefaultSources.Select(s => s.Name));
+            Status.Text = $"Background: consulting public benchmark and pricing websites ({sourceNames})…";
+            RatingsStatus.Text = $"Background: updating model ratings from web ({sourceNames})…";
+
+            var result = await ratings.UpdateFromWebAsync(settings, health, store, token: CancellationToken.None);
+            settings = store.LoadSettings();
+
+            var consulted = result.ConsultedSources.Count > 0 ? string.Join(", ", result.ConsultedSources) : "none";
+            var warningsText = result.Warnings.Count > 0 ? " Warnings: " + string.Join(" | ", result.Warnings) : "";
+            RatingsStatus.Text = $"Active ratings: {result.ActiveSummary} · {result.MatchedAgentModels}/{result.TotalAgentModels} agent models matched · Sources: {consulted}.{warningsText}";
+
+            RefreshAgentsGrid();
+            LoadProvider();
+            RefreshRoutes();
+            RefreshPerformance();
+
+            UpdateWebRatingsBanner(result.ActiveSummary);
+            Status.Text = "Background web ratings refresh complete.";
+        }
+        catch (Exception error)when (error is InvalidOperationException or IOException or HttpRequestException or TaskCanceledException)
+        {
+            // Keep current ratings; only update status text
+            RatingsStatus.Text += $" Background web refresh failed: {error.Message}";
+            LoadRatings();
+        }
+    }
+
+    private void AutoRefreshWebRatingsChanged(object sender, RoutedEventArgs e)
+    {
+        if (loading)
+            return;
+        settings = store.LoadSettings();
+        settings.AutoUpdateWebRatings = AutoRefreshWebRatings.IsChecked == true;
+        store.SaveSettings(settings);
+        if (settings.AutoUpdateWebRatings)
+            _ = Task.Run(RefreshWebRatingsIfStale);
+    }
+
     private async void UpdateRatingsNow(object sender, RoutedEventArgs e) => await Guard(async () =>
     {
         var url = RatingsUrl.Text.Trim();
@@ -62,11 +127,64 @@ public partial class MainWindow
             return;
         }
 
-        RatingsStatus.Text = "Active ratings: " + await ratings.UpdateFromUrlAsync(url, CancellationToken.None);
+        var summary = await ratings.UpdateFromUrlAsync(url, CancellationToken.None);
+        RatingsStatus.Text = "Active ratings: " + summary;
+        UpdateWebRatingsBanner(summary);
         LoadProvider();
         RefreshRoutes();
         Status.Text = "Model ratings updated from " + url;
     });
+
+    private async void UpdateRatingsFromWeb(object sender, RoutedEventArgs e) => await Guard(RunWebRatingsUpdateAsync);
+
+    private async Task RunWebRatingsUpdateAsync()
+    {
+        IdleOnly();
+        settings = store.LoadSettings();
+        detecting = true;
+        if (UpdateWebRatingsButton != null)
+            UpdateWebRatingsButton.IsEnabled = false;
+        if (UpdateWebRatingsAdvancedButton != null)
+            UpdateWebRatingsAdvancedButton.IsEnabled = false;
+        try
+        {
+            var sourceNames = string.Join(", ", WebModelRatingsUpdater.DefaultSources.Select(s => s.Name));
+            Status.Text = $"Consulting public benchmark and pricing websites ({sourceNames})…";
+            RatingsStatus.Text = $"Updating model ratings from web ({sourceNames})…";
+
+            var result = await ratings.UpdateFromWebAsync(settings, health, store, token: CancellationToken.None);
+            settings = store.LoadSettings();
+
+            var consulted = result.ConsultedSources.Count > 0 ? string.Join(", ", result.ConsultedSources) : "none";
+            var warningsText = result.Warnings.Count > 0 ? " Warnings: " + string.Join(" | ", result.Warnings) : "";
+            RatingsStatus.Text = $"Active ratings: {result.ActiveSummary} · {result.MatchedAgentModels}/{result.TotalAgentModels} agent models matched · Sources: {consulted}.{warningsText}";
+
+            RefreshAgentsGrid();
+            LoadProvider();
+            RefreshRoutes();
+            RefreshPerformance();
+
+            UpdateWebRatingsBanner(result.ActiveSummary);
+
+            var summary = $"Updated model ratings from {consulted}: {result.MatchedAgentModels}/{result.TotalAgentModels} agent models matched.";
+            Status.Text = result.Warnings.Count > 0 ? $"{summary} ({result.Warnings.Count} warning(s); see Model ratings)." : summary;
+            ShowToast("Model ratings updated", $"{result.MatchedAgentModels}/{result.TotalAgentModels} agent models matched ({consulted}).");
+        }
+        catch
+        {
+            LoadRatings();
+            throw;
+        }
+        finally
+        {
+            detecting = false;
+            if (UpdateWebRatingsButton != null)
+                UpdateWebRatingsButton.IsEnabled = true;
+            if (UpdateWebRatingsAdvancedButton != null)
+                UpdateWebRatingsAdvancedButton.IsEnabled = true;
+        }
+    }
+
     private async void OpenRatingsFile(object sender, RoutedEventArgs e) => await Guard(() =>
     {
         var path = ratings.EnsureFile();

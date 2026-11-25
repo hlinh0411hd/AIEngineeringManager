@@ -197,10 +197,14 @@ internal static class PixelRequest
         // For an animation the size is PER FRAME. Briefs often give the whole sheet ("each frame is
         // exactly 64x64; one horizontal 256x64 sheet" with outputWidth 256): the tool then made four
         // 256x64 frames. A frame size stated in the brief wins.
-        if (action == "animation" && FrameSize(Text(input["prompt"]) + " " + stepRequest) is { } frame
+        // A create is one still, so its brief size is the whole image; a brief that describes a grid,
+        // sheet or cells is left alone, since its per-cell size is not the image size.
+        var briefSize = Text(input["prompt"]) + " " + stepRequest;
+        var createGrid = Regex.IsMatch(TaskIntent.Normalize(briefSize), @"\b(sheet|grid|strip|tileset|row|rows|column|columns|cells?|total)\b");
+        if ((action == "animation" || (action == "create" && !createGrid)) && FrameSize(briefSize) is { } frame
             && (Number(input["outputWidth"]) != frame.Width || Number(input["outputHeight"]) != frame.Height))
         {
-            Note($"output size {Number(input["outputWidth"])?.ToString() ?? "?"}x{Number(input["outputHeight"])?.ToString() ?? "?"} → {frame.Width}x{frame.Height}: animation sizes are per frame, as the brief states");
+            Note($"output size {Number(input["outputWidth"])?.ToString() ?? "?"}x{Number(input["outputHeight"])?.ToString() ?? "?"} → {frame.Width}x{frame.Height}: the size the brief states wins");
             input["outputWidth"] = frame.Width;
             input["outputHeight"] = frame.Height;
         }
@@ -377,7 +381,7 @@ internal static class PixelRequest
         if (input["fallbackToApi"] != null) input["fallbackToApi"] = Bool(input["fallbackToApi"]) == true;
         var provider = Text(input["provider"]);
         if (provider == null) return;
-        if (provider is not ("codex" or "claude" or "pixellab" or "api") || options.Provider(provider) == null)
+        if (provider is not ("codex" or "pixellab" or "api") || options.Provider(provider) == null)
         {
             input.Remove("provider");
             notes.Add($"provider '{provider}' not offered by this tool; Codex CLI is used");

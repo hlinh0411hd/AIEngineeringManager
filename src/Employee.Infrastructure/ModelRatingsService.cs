@@ -54,6 +54,60 @@ public sealed class ModelRatingsService(string dataFolder)
         return summary;
     }
 
+    public async Task<WebRatingsUpdateResult> UpdateFromWebAsync(
+        ManagerSettings settings,
+        IReadOnlyList<ProviderHealth>? health = null,
+        IEmployeeStore? store = null,
+        IReadOnlyList<(string Name, string Url)>? sources = null,
+        HttpMessageHandler? httpHandler = null,
+        CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        RatingSet? existing = null;
+        if (File.Exists(FilePath) && new FileInfo(FilePath).Length <= MaxBytes)
+        {
+            try
+            {
+                existing = Parse(File.ReadAllText(FilePath), "file");
+            }
+            catch (InvalidOperationException)
+            {
+                existing = null;
+            }
+        }
+
+        var result = await WebModelRatingsUpdater.FetchAndBuildAsync(settings, existing, sources, httpHandler, token);
+        var serialized = JsonSerializer.Serialize(result.RatingSet, Json);
+        if (System.Text.Encoding.UTF8.GetByteCount(serialized) > MaxBytes)
+            throw new InvalidOperationException("Synthesized model-ratings.json exceeds 1 MB.");
+
+        var summary = ModelRatings.Apply(result.RatingSet);
+        Directory.CreateDirectory(dataFolder);
+        File.WriteAllText(FilePath, serialized);
+
+        foreach (var provider in settings.Providers)
+        {
+            for (var i = 0; i < provider.Models.Count; i++)
+            {
+                var model = provider.Models[i];
+                if (string.IsNullOrWhiteSpace(model.Id) || model.RatedByUser)
+                    continue;
+                provider.Models[i] = model with
+                {
+                    Quality = model.EffectiveQuality,
+                    CostRank = model.EffectiveCostRank,
+                    RatedByUser = false
+                };
+            }
+        }
+
+        if (store != null && health != null)
+            ModelCatalogMerge.AssignAutomaticRoles(settings, health, store);
+
+        store?.SaveSettings(settings);
+        return result with { ActiveSummary = summary };
+    }
+
     // Writes the built-in table as an editable ratings file when none exists yet.
     public string EnsureFile()
     {

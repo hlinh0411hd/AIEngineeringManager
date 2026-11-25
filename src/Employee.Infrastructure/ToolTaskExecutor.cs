@@ -52,7 +52,7 @@ public sealed class ToolTaskExecutor(IEmployeeStore store, IToolWorkflowStore re
 
     // Final Pixel request: values read from the request text (only when the user did not pick the
     // settings in the Tool task form), then completion to what the tool accepts, always.
-    internal static IReadOnlyList<string> FinishPixelRequest(JsonObject input, PixelToolOptions options, string stepRequest, bool presetApplied, string? goalText)
+    internal static IReadOnlyList<string> FinishPixelRequest(JsonObject input, PixelToolOptions options, string stepRequest, bool presetApplied, string? goalText, string? fullBrief = null)
     {
         if (!presetApplied)
         {
@@ -60,7 +60,43 @@ public sealed class ToolTaskExecutor(IEmployeeStore store, IToolWorkflowStore re
             if (goalText != null)
                 PixelToolOptions.ApplyTextHints(input, goalText, overrideExisting: true);
         }
+        // The tool sees only the prompt: the user's whole request (colours, theme, size, style, ...) goes
+        // with it, not just what the planner condensed. The prompt is capped at 4000 characters later.
+        var brief = fullBrief?.Trim();
+        if (!string.IsNullOrEmpty(brief) && input["prompt"] is JsonValue promptValue && promptValue.TryGetValue<string>(out var prompt) && !prompt.Contains(brief, StringComparison.Ordinal))
+        {
+            var tail = "\n\nFull request from the user (keep every detail: colours, theme, size, style, mood, subject):\n" + (brief.Length > 2500 ? brief[..2500] : brief);
+            input["prompt"] = (prompt.Length + tail.Length > 4000 ? prompt[..Math.Max(0, 4000 - tail.Length)] : prompt) + tail;
+        }
         return PixelRequest.Complete(input, options, stepRequest);
+    }
+
+    // Pixel Foundry's cliOrder: the CLI the user names in the request goes first, then every CLI switched
+    // on in Settings, in list order. The web sources (gemini-web, chatgpt-web) are used only when named,
+    // since no setting switches them on. A CLI the user says to avoid is removed.
+    internal static readonly string[] PixelCliIds = ["codex", "pollinations", "gemini", "chatgpt", "antigravity", "cline", "copilot", "devin", "kilo", "opencode", "qoder"];
+    // Claude CLI is not offered for Pixel Art: the tool draws with Codex, ChatGPT web or Antigravity only.
+    private static readonly HashSet<string> PixelSettingsCliIds = ["codex", "antigravity", "cline", "copilot", "devin", "kilo", "opencode", "qoder"];
+
+    internal static IReadOnlyList<string> PixelCliOrder(IEnumerable<string?> texts, IEnumerable<ProviderSettings> providers)
+    {
+        string? prefer = null, avoid = null;
+        foreach (var text in texts.Where(text => !string.IsNullOrWhiteSpace(text)))
+        {
+            var (p, a) = ProviderRequest.From(text!, PixelCliIds);
+            prefer ??= p;
+            avoid ??= a;
+        }
+        static string Backend(string id) => id switch { "gemini" => "gemini-web", "chatgpt" => "chatgpt-web", _ => id };
+        var order = new List<string>();
+        if (prefer != null)
+            order.Add(Backend(prefer));
+        foreach (var provider in providers.Where(p => p.Enabled && !p.TurnedOff && PixelSettingsCliIds.Contains(p.Id)))
+            if (!order.Contains(provider.Id))
+                order.Add(provider.Id);
+        if (avoid != null)
+            order.Remove(Backend(avoid));
+        return order;
     }
 
     // The settings the user chose in the Tool task form override what the planner wrote, on the tool
@@ -746,9 +782,18 @@ public sealed class ToolTaskExecutor(IEmployeeStore store, IToolWorkflowStore re
                         step.State is not (WorkState.Completed or WorkState.Skipped));
                     var goal = session.RootWorkId == null ? null : store.WorkItems().FirstOrDefault(item => item.Id == session.RootWorkId);
                     var update = goal?.Comments.LastOrDefault(comment => !comment.IsAssistant);
-                    var corrections = FinishPixelRequest(input, PixelToolOptions.Read(profile), work.Request, presetApplied, otherImageSteps ? null : update?.Text ?? goal?.Request ?? session.Goal);
+                    var fullBrief = string.Join("\n", new[] { goal?.Request ?? session.Goal, update?.Text }.Where(t => !string.IsNullOrWhiteSpace(t)).Distinct());
+                    var corrections = FinishPixelRequest(input, PixelToolOptions.Read(profile), work.Request, presetApplied, otherImageSteps ? null : update?.Text ?? goal?.Request ?? session.Goal, fullBrief);
                     if (corrections.Count > 0)
                         store.Log(work.Id, "PixelRequestCompleted", string.Join("; ", corrections));
+                    // Own paid API and PixelLab requests keep their provider; every other request runs the CLI order.
+                    if (input["provider"] is not JsonValue { } providerValue || !(providerValue.TryGetValue<string>(out var chosenProvider) && chosenProvider is "api" or "pixellab"))
+                    {
+                        var cli = PixelCliOrder([update?.Text, goal?.Request, session.Goal, work.Request], store.LoadSettings().Providers);
+                        if (cli.Count == 0)
+                            throw new InvalidOperationException("No CLI is switched on for Pixel Art. Turn one on in Settings, or name it in the request.");
+                        input["cliOrder"] = new JsonArray(cli.Select(id => (JsonNode)JsonValue.Create(id)!).ToArray());
+                    }
                     // A remake after the tool's own check found problems: say what to avoid.
                     if (store.Logs(work.Id).LastOrDefault(l => l.Event == "ToolQualityRedo") is { } redo && input["prompt"] is JsonValue promptValue && promptValue.TryGetValue<string>(out var prompt))
                     {

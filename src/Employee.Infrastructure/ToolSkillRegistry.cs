@@ -125,11 +125,30 @@ public sealed class ToolSkillRegistry
                 ],
                 _ => []
             };
-            if (!aliases.Any(alias => MentionsTool(request, alias))) continue;
+            if (!aliases.Any(alias => MentionsTool(request, alias) || StatesUse(request, alias))) continue;
             var candidates = group.ToArray();
             if (candidates.Length == 1) selected.Add(candidates[0]);
         }
         return selected;
+    }
+
+    // "tool pixel art có thể dùng antigravity trong setting" names the tool and says to use it, with the verb
+    // not right before the name. A clause that names the tool, says to use it and does not negate it is a request.
+    internal static bool StatesUse(string request, string name)
+    {
+        var text = System.Text.RegularExpressions.Regex.Replace(request, "\"[^\"]*\"|“[^”]*”|`[^`]*`", " ");
+        var target = System.Text.RegularExpressions.Regex.Escape(TaskIntent.Normalize(name));
+        if (target.Length == 0) return false;
+        foreach (var clause in System.Text.RegularExpressions.Regex.Split(text, @"[\r\n.!?;]+"))
+        {
+            var normalized = TaskIntent.Normalize(System.Text.RegularExpressions.Regex.Replace(clause, "đừng|Đừng|ĐỪNG|chớ|Chớ", " do not ", System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+            if (System.Text.RegularExpressions.Regex.IsMatch(normalized, @"\b(vi du|chang han|example|for instance|such as|e g|how to|cach su dung|cach dung)\b")) continue;
+            if (!System.Text.RegularExpressions.Regex.IsMatch(normalized, @"(?<![\w])" + target + @"\b")) continue;
+            if (System.Text.RegularExpressions.Regex.IsMatch(normalized, @"\b(khong|chung|do not|don t|never|without|avoid|instead of|rather than)\b")) continue;
+            if (System.Text.RegularExpressions.Regex.IsMatch(normalized, @"\b(dung|su dung|xai|use|using|invoke|bang|qua)\b"))
+                return true;
+        }
+        return false;
     }
 
     private static bool MentionsTool(string request, string name)
@@ -166,22 +185,7 @@ public sealed class ToolSkillRegistry
     public bool ShouldPlan(string request)
     {
         if (RequestedTools(request).Count > 0) return true;
-        if (Definitions.Where(d => d.Connector != "ai").Any(d => d.Keywords.Any(k => Matches(request, k)) || tools.Tools().Any(t => t.Connector == d.Connector && t.Name.Length >= 4 && Matches(request, t.Name))))
-            return true;
-        // Feature creation deserves a semantic planning pass even when no media/tool noun was mentioned.
-        return tools.Tools().Any(t => t.Enabled && Definitions.Any(d => d.Connector == t.Connector)) && new[]
-        {
-            "them",
-            "tao",
-            "xay dung",
-            "phat trien",
-            "lam tinh nang",
-            "lam chuc nang",
-            "build",
-            "create",
-            "implement",
-            "add"
-        }.Any(k => Matches(request, k));
+        return Definitions.Where(d => d.Connector != "ai").Any(d => d.Keywords.Any(k => Matches(request, k)) || tools.Tools().Any(t => t.Connector == d.Connector && t.Name.Length >= 4 && Matches(request, t.Name)));
     }
 
     public static bool IsPreparation(WorkItem work, IEmployeeStore store) => work.SessionId != null && store.WorkItems().Any(w => w.SessionId == work.SessionId && w.Tool?.InputFrom == work.Id);

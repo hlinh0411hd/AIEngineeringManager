@@ -15,6 +15,33 @@ public sealed class SessionEngine(IEmployeeStore store, IAutonomyStore autonomy,
     public event Action? Changed;
     private WorkSession Session(string id) => autonomy.Sessions().Single(s => s.Id == id);
     private List<WorkItem> Workers(string id) => store.WorkItems().Where(w => w.SessionId == id && !w.IsCoordinator && !w.IsGoal).ToList();
+
+    // Nothing else can run: when a step is set aside for a tool's quota reset soon enough, wait for that reset
+    // and requeue the steps whose time has come. Returns false when no such step waits, or the wait is long
+    // (the session then stops and the user resumes it).
+    private static readonly TimeSpan MaxQuotaWait = TimeSpan.FromHours(6);
+    private async Task<bool> WaitForQuotaReset(IEnumerable<WorkItem> tasks, CancellationToken token)
+    {
+        var timed = tasks.Where(w => w.State == WorkState.WaitingForProvider && w.ScheduledAt != null).ToArray();
+        if (timed.Length == 0)
+            return false;
+        var earliest = timed.Min(w => w.ScheduledAt!.Value);
+        var wait = earliest - DateTimeOffset.Now;
+        if (wait > MaxQuotaWait)
+            return false;
+        if (wait > TimeSpan.Zero)
+            await Task.Delay(wait, token);
+        var now = DateTimeOffset.Now;
+        foreach (var work in timed.Where(w => w.ScheduledAt!.Value <= now))
+        {
+            work.State = WorkState.Queued;
+            work.ScheduledAt = null;
+            store.SaveWork(work);
+            store.Log(work.Id, "CapacityRetry", "The tool's quota has reset; the step is queued again.");
+        }
+        return true;
+    }
+
     private void Save(WorkSession session)
     {
         autonomy.SaveSession(session);
@@ -367,6 +394,17 @@ public sealed class SessionEngine(IEmployeeStore store, IAutonomyStore autonomy,
     {
         if (!s.AutoContinueSteps || !s.RunTestsAtBatchEnd || s.RootWorkId == null || s.ProjectIds.Count != 1)
             return false;
+        if (s.SkipAutoTest || (tasks.Count == 1 && !s.RunTestsAtTaskEnd && s.Phases.Count == 0 && store.WorkItems().FirstOrDefault(w => w.Id == s.RootWorkId) is { } rootGoal && WorkComplexity.Score(rootGoal) < WorkComplexity.LightBelow))
+        {
+            var skippedChanged = tasks.Any(w => w.Kind == WorkKind.Coding && w.Access == AccessLevel.WriteProject && w.VerifyScope == null && w.State == WorkState.Completed && (s.LastCheckAt == null || (w.UpdatedAt ?? w.CreatedAt) > s.LastCheckAt));
+            if (skippedChanged)
+            {
+                s.LastCheckAt = DateTimeOffset.UtcNow;
+                store.Log(s.RootWorkId, "AutoCheckSkipped", "Skipped automatic test pass: change marked as small/user-verifiable.");
+                Save(s);
+            }
+            return false;
+        }
         var changed = tasks.Any(w => w.Kind == WorkKind.Coding && w.Access == AccessLevel.WriteProject && w.VerifyScope == null && w.State == WorkState.Completed && (s.LastCheckAt == null || (w.UpdatedAt ?? w.CreatedAt) > s.LastCheckAt));
         var project = store.Projects().FirstOrDefault(p => p.Id == s.ProjectIds[0]);
         if (!changed || project == null)
@@ -453,7 +491,7 @@ public sealed class SessionEngine(IEmployeeStore store, IAutonomyStore autonomy,
 
     private async Task<bool> CheckAcceptanceOnce(WorkSession s, IReadOnlyList<WorkItem> tasks, CancellationToken token)
     {
-        if (!s.VerifyAcceptance || !s.AutoContinueSteps || s.RootWorkId == null || s.ProjectIds.Count != 1 || s.AccessCeiling != AccessLevel.WriteProject || s.AcceptanceStalled != null)
+        if (s.SkipAutoTest || !s.VerifyAcceptance || !s.AutoContinueSteps || s.RootWorkId == null || s.ProjectIds.Count != 1 || s.AccessCeiling != AccessLevel.WriteProject || s.AcceptanceStalled != null)
             return false;
         // Only large work: a plan with milestones, or building something new. Ordinary tasks run as before.
         if (s.Phases.Count == 0 && !TaskIntent.IsNewBuild(store.WorkItems().FirstOrDefault(w => w.Id == s.RootWorkId)?.Request ?? s.Goal))
@@ -1092,6 +1130,9 @@ public sealed class SessionEngine(IEmployeeStore store, IAutonomyStore autonomy,
                 store.Log(work.Id, "ImageStepResumed", work.Notes);
             }
 
+            // Work kinds that no AI could take in this run: a step that found no usable AI at all marks its
+            // capability, and the similar steps wait instead of trying every AI again. Cleared when quota resets.
+            var unreachable = new HashSet<WorkCapability>();
             while (true)
             {
                 cancellation.Token.ThrowIfCancellationRequested();
@@ -1162,7 +1203,7 @@ public sealed class SessionEngine(IEmployeeStore store, IAutonomyStore autonomy,
                     return;
                 }
 
-                var next = tasks.Where(w => w.State is WorkState.Queued or WorkState.Paused).Where(w => TaskDependencies.Ready(w, tasks)).OrderByDescending(w => w.Priority).ThenBy(w => w.CreatedAt).FirstOrDefault();
+                var next = tasks.Where(w => w.State is WorkState.Queued or WorkState.Paused).Where(w => TaskDependencies.Ready(w, tasks)).Where(w => !unreachable.Contains(w.Capability)).OrderByDescending(w => w.Priority).ThenBy(w => w.CreatedAt).FirstOrDefault();
                 if (next == null)
                 {
                     if (WaiveUnreachableCriteria(s, tasks))
@@ -1172,6 +1213,12 @@ public sealed class SessionEngine(IEmployeeStore store, IAutonomyStore autonomy,
                     }
                     if (await RepairMissingToolOutput(s, tasks, cancellation.Token))
                     {
+                        Changed?.Invoke();
+                        continue;
+                    }
+                    if (await WaitForQuotaReset(tasks, cancellation.Token))
+                    {
+                        unreachable.Clear();
                         Changed?.Invoke();
                         continue;
                     }
@@ -1289,6 +1336,9 @@ public sealed class SessionEngine(IEmployeeStore store, IAutonomyStore autonomy,
                 s.CallsUsed += next.Attempts - attempts;
                 s.SwitchesUsed += next.Switches - switches;
                 Save(s);
+                // No AI could take this step at all: the other steps of its kind wait for this run to end.
+                if (next.State == WorkState.WaitingForProvider && next.ScheduledAt == null && next.Notes.Contains("No other usable AI right now", StringComparison.Ordinal) && unreachable.Add(next.Capability))
+                    store.Log(next.Id, "CapabilitySkipped", $"No AI could take {WorkCapabilities.Display(next.Capability)} work now; similar steps wait instead of trying every AI again.");
                 if (s.RootWorkId != null && store.WorkItems().Single(w => w.Id == s.RootWorkId).PendingAccess != null)
                 {
                     s.State = SessionState.WaitingForUser;
@@ -1363,12 +1413,14 @@ public sealed class SessionEngine(IEmployeeStore store, IAutonomyStore autonomy,
                 }
                 else if (next.State is WorkState.WrongAccess or WorkState.WrongProject)
                     Defer(sessionId, next.Id, next.State.ToString(), next.ProblemReason);
-                else if (next.State == WorkState.WaitingForProvider)
+                else if (next.State == WorkState.WaitingForProvider && next.ScheduledAt == null)
                     Defer(sessionId, next.Id, "ProviderWait", next.Notes);
                 else if (next.State is WorkState.AwaitingApproval or WorkState.WaitingForPermission or WorkState.Failed)
                     Defer(sessionId, next.Id, "Approval", next.Notes);
                 Changed?.Invoke();
-                if (!s.Away && next.State is not (WorkState.Delegated or WorkState.Completed))
+                // A step set aside for a tool's quota reset does not stop the session: the other steps go on.
+                var setAside = next.State == WorkState.WaitingForProvider && next.ScheduledAt != null;
+                if (!s.Away && !setAside && next.State is not (WorkState.Delegated or WorkState.Completed))
                 {
                     s = Session(sessionId);
                     s.State = SessionState.WaitingForUser;

@@ -11,7 +11,8 @@ public partial class MainWindow
 {
     private ControlCenterView? controlCenter;
     private DashboardView? dashboard;
-    private bool shellAutonomous, shellLoading, updateReviewPending;
+    private const bool shellAutonomous = false;
+    private bool shellLoading, updateReviewPending;
     private DateTimeOffset lastShellRefresh;
     private TimeSpan previousProcessor;
     private DateTimeOffset previousProcessorAt;
@@ -78,7 +79,6 @@ public partial class MainWindow
             if (id != null)
                 OpenGoal(id);
         };
-        ShellAway.IsChecked = settings.Automation.Away;
         RefreshLocalModelChoices();
         shellLoading = false;
         NavigateShell("office");
@@ -122,20 +122,22 @@ public partial class MainWindow
             return;
         }
 
+        if (page == "local")
+        {
+            OpenSettingsSection("Local");
+            return;
+        }
+
         Tabs.SelectedItem = page switch
         {
-            "dashboard" => DashboardTab,
+            "dashboard" or "agents" => DashboardTab,
             "projects" => ProjectsTab,
             "tasks" => TasksTab,
-            "testing" => TestingTab,
             "office" => OfficeTab,
-            "agents" => AgentsTab,
             "providers" => ProvidersTab,
-            "local" => LocalTab,
             "tools" or "workflows" or "updates" => ToolsTab,
             "activity" => ActivityTab,
             "approvals" => ApprovalsTab,
-            "guide" => GuideTab,
             "settings" => SettingsTab,
             _ => DashboardTab
         };
@@ -158,36 +160,6 @@ public partial class MainWindow
         NavigateShell("tasks");
         ShowTaskCreate(sender, e);
         TaskRequest.Focus();
-    }
-
-    private void ShellMode(object sender, RoutedEventArgs e)
-    {
-        shellAutonomous = sender is Button { Tag: "autonomous" };
-        TaskModeButton.Background = shellAutonomous ? Brushes.Transparent : new SolidColorBrush(Color.FromRgb(72, 52, 113));
-        AutonomousModeButton.Background = shellAutonomous ? new SolidColorBrush(Color.FromRgb(72, 52, 113)) : Brushes.Transparent;
-        TaskModeButton.BorderThickness = AutonomousModeButton.BorderThickness = new Thickness(1);
-        TaskModeButton.BorderBrush = shellAutonomous ? Brushes.Transparent : UiArt.Brush("#A084E9");
-        AutonomousModeButton.BorderBrush = shellAutonomous ? UiArt.Brush("#A084E9") : Brushes.Transparent;
-        ShellNewTask(sender, e);
-        Status.Text = shellAutonomous ? "New goals will be planned; permissions, budgets and approval gates are unchanged." : "New tasks use the planning policy from Settings.";
-    }
-
-    private void ShellAwayChanged(object sender, RoutedEventArgs e)
-    {
-        if (shellLoading || store == null)
-            return;
-        var away = ShellAway.IsChecked == true;
-        settings.Automation.Away = away;
-        var saved = store.LoadSettings();
-        saved.Automation.Away = away;
-        store.SaveSettings(saved);
-        AutoAway.IsChecked = away;
-        foreach (var id in unified.CurrentGoalIds)
-        {
-            var goal = store.WorkItems().Single(w => w.Id == id);
-            if (goal.SessionId != null)
-                unified.EngineFor(goal).SetAway(goal.SessionId, away);
-        }
     }
 
     private void HeaderPause(object sender, RoutedEventArgs e)

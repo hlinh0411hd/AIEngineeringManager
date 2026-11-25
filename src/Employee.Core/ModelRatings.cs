@@ -98,7 +98,7 @@ public static class WorkCapabilities
 
 public sealed record ModelRating(int Quality, int CostRank, string Source);
 // Ratings-file format (model-ratings.json, local or from a URL). Quality keys are WorkCapability names.
-public sealed record RatingEntry(string Pattern, int Cost, Dictionary<string, int> Quality);
+public sealed record RatingEntry(string Pattern, int Cost, Dictionary<string, int> Quality, string? Deprecation = null);
 // Priority: optional per-work-type model order ("provider/model" or "provider/model@maxDifficulty"),
 // work type names as keys. A work type that is not listed keeps the built-in order; an empty list
 // turns the order off for that work type.
@@ -140,16 +140,25 @@ public static class ModelRatings
         ("haiku-4",   6, [ 78, 74, 72, 78, 85, 85, 70,  0, 78, 72, 75, 80, 68, 68, 66, 72, 76, 82, 78, 78]),
         ("haiku",   4, [ 79, 75, 73, 80, 88, 88, 70,  0, 78, 75, 77, 84, 68, 68, 66, 72, 78, 86, 82, 82]),
         ("glm",            8, [ 70, 68, 66, 70, 78, 78, 64,  0, 68, 64, 66, 72, 60, 60, 60, 64, 68, 74,  0, 70]),
+        ("gemini-4-carbon",   42, [ 90, 92, 91, 88, 91, 91, 93,  0, 88, 92, 89, 89, 92, 91, 93, 89, 87, 90,  0, 88]),
+        ("gemini-4-neon",     35, [ 92, 90, 90, 88, 90, 90, 90,  0, 91, 91, 91, 90, 90, 90, 90, 89, 87, 89,  0, 90]),
+        ("gemini-4-argon",    22, [ 85, 85, 86, 84, 88, 88, 85,  0, 84, 85, 85, 86, 84, 84, 85, 83, 82, 86,  0, 85]),
+        ("gemini-4-hydrogen", 10, [ 81, 79, 79, 80, 86, 86, 78,  0, 80, 79, 80, 83, 77, 77, 77, 78, 78, 84,  0, 82]),
+        ("nemotron-3-ultra",   2, [ 83, 82, 81, 79, 84, 84, 82,  0, 80, 82, 82, 82, 81, 80, 82, 79, 77, 81,  0, 81]),
+        ("qwen4-max",          2, [ 82, 81, 80, 80, 84, 84, 80,  0, 81, 81, 81, 81, 79, 79, 80, 79, 78, 82,  0, 80]),
+        ("kilo-auto/free",     2, [ 80, 78, 77, 77, 80, 80, 77,  0, 78, 78, 79, 79, 76, 76, 77, 76, 75, 78,  0, 78]),
+        ("gemma-4-31b",        2, [ 78, 78, 76, 77, 80, 80, 75,  0, 77, 76, 77, 78, 74, 74, 75, 75, 75, 78,  0, 76]),
+        ("swe-2-flash",        2, [ 77, 74, 72, 70, 74, 74, 72,  0, 74, 76, 76, 77, 72, 72, 72, 70, 68, 70,  0, 76]),
         ("flash",          8, [ 70, 68, 66, 70, 78, 78, 64,  0, 68, 64, 66, 72, 60, 60, 60, 64, 68, 74,  0, 70]),
         // Gemini models other than Flash (rough estimate: mid tier). Replace through the ratings file.
         ("gemini",        40, [ 88, 87, 88, 86, 90, 90, 87,  0, 87, 86, 87, 88, 86, 86, 86, 85, 84, 89, 88, 87]),
         ("mini",          10, [ 74, 70, 68, 72, 80, 80, 66, 70, 70, 68, 70, 76, 64, 64, 62, 66, 68, 78, 72, 74]),
         ("nano",           4, [ 62, 58, 55, 62, 72, 72, 52,  0, 58, 55, 58, 66, 50, 50, 48, 54, 58, 70,  0, 62])
     ];
-    // Ratings loaded from a ratings file or URL take precedence over the built-in table.
-    // Replaced as a whole, so readers on any thread see rows and source from the same load.
-    private sealed record LoadedRatings((string Pattern, int Cost, int[] Quality)[] Rows, string Source, Dictionary<WorkCapability, PriorityRung[]>? Priority = null);
-    private static LoadedRatings loaded = new([], "");
+// Ratings loaded from a ratings file or URL take precedence over the built-in table.
+// Replaced as a whole, so readers on any thread see rows and source from the same load.
+private sealed record LoadedRatings((string Pattern, int Cost, int[] Quality, string? Deprecation)[] Rows, string Source, Dictionary<WorkCapability, PriorityRung[]>? Priority = null);
+private static LoadedRatings loaded = new([], "");
 
     // Which models to try first for each work type, in the user's order. The router takes the first
     // one that is usable and good enough for the step's difficulty; models that are not in the
@@ -158,24 +167,77 @@ public static class ModelRatings
     // "@69" = only while the step's difficulty is 69 or less.
     private static readonly Dictionary<WorkCapability, string[]> DefaultPriority = new()
     {
-        [WorkCapability.Coding] = Ladder("haiku", "sonnet", "sol", "opus", "astra"),
-        [WorkCapability.Debugging] = Ladder("sonnet@69", "opus", "astra", "sol"),
-        [WorkCapability.Refactoring] = Ladder("haiku", "sonnet", "sol", "opus"),
-        [WorkCapability.Testing] = Ladder("haiku", "terra", "sonnet", "sol", "opus"),
-        [WorkCapability.BuildDevOps] = Ladder("haiku", "terra", "sonnet", "sol", "opus"),
-        [WorkCapability.UiDesign] = Ladder("sonnet", "opus", "sol", "astra"),
-        [WorkCapability.GraphicsMath] = Ladder("sonnet@69", "opus", "astra", "sol"),
-        [WorkCapability.Performance] = Ladder("sonnet@69", "opus", "astra", "sol"),
-        [WorkCapability.Architecture] = Ladder("sonnet@69", "opus", "astra"),
-        [WorkCapability.Planning] = Ladder("opus", "sonnet", "astra"),
-        [WorkCapability.Review] = Ladder("haiku", "terra", "sonnet", "sol", "opus", "astra"),
-        [WorkCapability.Research] = Ladder("sonnet", "opus", "sol"),
-        [WorkCapability.Content] = Ladder("haiku", "sonnet", "sol", "opus"),
-        [WorkCapability.CreativeWriting] = Ladder("sonnet", "opus", "sol"),
-        [WorkCapability.GameDesign] = Ladder("sonnet", "opus", "sol", "astra"),
-        [WorkCapability.Translation] = Ladder("haiku", "terra", "sonnet", "opus"),
-        [WorkCapability.Classification] = Ladder("haiku", "luna", "terra", "sonnet"),
-        [WorkCapability.Extraction] = Ladder("haiku", "luna", "terra", "sonnet"),
+        [WorkCapability.Coding] = [
+            "kilo/kilo/nvidia/nemotron-3-ultra-550b-a55b:free@35", "opencode/opencode/qwen4-max-free@35", "cline/nvidia/nemotron-3-ultra-550b-a55b:free@35", "kilo/kilo/kilo-auto/free@35", "opencode/opencode/deepseek-v4.1-flash-free@35", "devin/swe-2-flash-medium@35",
+            ..Ladder("haiku", "sonnet", "sol", "opus", "astra"),
+            "claude/claude-haiku-5-5@35",
+            "antigravity/gemini-4-hydrogen-medium@35", "antigravity/gemini-4-neon-medium", "antigravity/claude-sonnet-5-5-medium", "antigravity/gemini-4-carbon-medium", "antigravity/claude-sonnet-4-6", "antigravity/gemini-3.8-flash-medium",
+            "kilo/kilo/nvidia/nemotron-3-ultra-550b-a55b:free", "opencode/opencode/qwen4-max-free", "cline/nvidia/nemotron-3-ultra-550b-a55b:free", "kilo/kilo/kilo-auto/free", "opencode/opencode/deepseek-v4.1-flash-free", "cline/google/gemma-4-31b-it:free", "devin/swe-2-flash-medium", "qoder/GLM-5.3"],
+        [WorkCapability.Debugging] = [..Ladder("sonnet@69", "opus", "astra", "sol"),
+            "antigravity/gemini-4-neon-medium@69", "antigravity/gemini-4-carbon-medium", "antigravity/claude-opus-5-5-medium", "antigravity/claude-opus-4-6-thinking", "antigravity/gemini-3.8-flash-medium",
+            "kilo/kilo/nvidia/nemotron-3-ultra-550b-a55b:free", "opencode/opencode/qwen4-max-free", "cline/nvidia/nemotron-3-ultra-550b-a55b:free", "devin/swe-2-flash-medium", "qoder/GLM-5.3"],
+        [WorkCapability.Refactoring] = [
+            "opencode/opencode/qwen4-max-free@35", "kilo/kilo/nvidia/nemotron-3-ultra-550b-a55b:free@35", "cline/recursive/flint-v1.0:free@35", "devin/swe-2-flash-medium@35",
+            ..Ladder("haiku", "sonnet", "sol", "opus"),
+            "claude/claude-haiku-5-5@35",
+            "antigravity/gemini-4-hydrogen-medium@35", "antigravity/gemini-4-neon-medium", "antigravity/gemini-4-carbon-medium", "antigravity/claude-sonnet-5-5-medium", "antigravity/claude-sonnet-4-6", "antigravity/gemini-3.8-flash-medium",
+            "opencode/opencode/qwen4-max-free", "kilo/kilo/nvidia/nemotron-3-ultra-550b-a55b:free", "cline/recursive/flint-v1.0:free", "devin/swe-2-flash-medium"],
+        [WorkCapability.Testing] = [
+            "opencode/opencode/deepseek-v4.1-flash-free@35", "kilo/kilo/kilo-auto/free@35", "cline/inclusionai/ling-3.2-flash:free@35", "devin/swe-2-flash-medium@35",
+            ..Ladder("haiku", "terra", "sonnet", "sol", "opus"),
+            "claude/claude-haiku-5-5@35",
+            "antigravity/gemini-4-argon-medium", "antigravity/gemini-4-hydrogen-medium", "antigravity/gemini-3.8-flash-medium",
+            "opencode/opencode/deepseek-v4.1-flash-free", "kilo/kilo/kilo-auto/free", "cline/inclusionai/ling-3.2-flash:free", "devin/swe-2-flash-medium"],
+        [WorkCapability.BuildDevOps] = [
+            "opencode/opencode/deepseek-v4.1-flash-free@35", "kilo/kilo/kilo-auto/free@35", "cline/inclusionai/ling-3.2-flash:free@35", "devin/swe-2-flash-medium@35",
+            ..Ladder("haiku", "terra", "sonnet", "sol", "opus"),
+            "claude/claude-haiku-5-5@35",
+            "antigravity/gemini-4-argon-medium", "antigravity/gemini-4-hydrogen-medium", "antigravity/gemini-3.8-flash-medium",
+            "opencode/opencode/deepseek-v4.1-flash-free", "kilo/kilo/kilo-auto/free", "cline/inclusionai/ling-3.2-flash:free", "devin/swe-2-flash-medium"],
+        [WorkCapability.UiDesign] = [..Ladder("sonnet", "opus", "sol", "astra"),
+            "antigravity/gemini-4-neon-medium", "antigravity/claude-sonnet-5-5-medium", "antigravity/claude-sonnet-4-6", "antigravity/gemini-3.8-flash-medium",
+            "opencode/opencode/qwen4-max-free", "kilo/kilo/nvidia/nemotron-3-ultra-550b-a55b:free", "cline/google/gemma-4-31b-it:free"],
+        [WorkCapability.GraphicsMath] = [..Ladder("sonnet@69", "opus", "astra", "sol"),
+            "antigravity/gemini-4-neon-medium@69", "antigravity/gemini-4-carbon-medium", "antigravity/claude-opus-5-5-medium", "antigravity/claude-opus-4-6-thinking",
+            "kilo/kilo/nvidia/nemotron-3-ultra-550b-a55b:free", "opencode/opencode/qwen4-max-free"],
+        [WorkCapability.Performance] = [..Ladder("sonnet@69", "opus", "astra", "sol"),
+            "antigravity/gemini-4-neon-medium@69", "antigravity/gemini-4-carbon-medium", "antigravity/claude-opus-5-5-medium", "antigravity/claude-opus-4-6-thinking",
+            "kilo/kilo/nvidia/nemotron-3-ultra-550b-a55b:free", "opencode/opencode/qwen4-max-free"],
+        [WorkCapability.Architecture] = [..Ladder("sonnet@69", "opus", "astra"),
+            "antigravity/gemini-4-neon-medium@69", "antigravity/gemini-4-carbon-medium", "antigravity/claude-opus-5-5-medium", "antigravity/claude-opus-4-6-thinking", "antigravity/gemini-3.8-flash-medium",
+            "kilo/kilo/nvidia/nemotron-3-ultra-550b-a55b:free", "opencode/opencode/qwen4-max-free", "cline/nvidia/nemotron-3-ultra-550b-a55b:free"],
+        [WorkCapability.Planning] = [..Ladder("opus", "sonnet", "astra"),
+            "antigravity/gemini-4-carbon-medium", "antigravity/gemini-4-neon-medium", "antigravity/claude-opus-5-5-medium", "antigravity/claude-opus-4-6-thinking", "antigravity/gemini-3.8-flash-medium",
+            "responses-api/gpt-6.2-astra", "kilo/kilo/nvidia/nemotron-3-ultra-550b-a55b:free", "opencode/opencode/qwen4-max-free", "cline/nvidia/nemotron-3-ultra-550b-a55b:free"],
+        [WorkCapability.Review] = [..Ladder("haiku", "terra", "sonnet", "sol", "opus", "astra"),
+            "claude/claude-haiku-5-5@35",
+            "antigravity/gemini-4-carbon-medium", "antigravity/claude-sonnet-5-5-medium", "antigravity/claude-sonnet-4-6", "antigravity/gemini-3.8-flash-medium",
+            "kilo/kilo/nvidia/nemotron-3-ultra-550b-a55b:free", "opencode/opencode/qwen4-max-free", "cline/google/gemma-4-31b-it:free", "clixad/gpt-6-luna"],
+        [WorkCapability.Research] = [..Ladder("sonnet", "opus", "sol"),
+            "antigravity/gemini-4-carbon-medium", "antigravity/gemini-4-neon-medium", "antigravity/gemini-3.8-flash-medium",
+            "kilo/kilo/nvidia/nemotron-3-ultra-550b-a55b:free", "opencode/opencode/qwen4-max-free", "clixad/gemini-3.8-flash"],
+        [WorkCapability.Content] = [..Ladder("haiku", "sonnet", "sol", "opus"),
+            "claude/claude-haiku-5-5@35",
+            "antigravity/gemini-4-neon-medium", "antigravity/gemini-3.8-flash-medium",
+            "responses-api/claude-sonnet-5", "qoder/GLM-5.3", "kilo/kilo/inclusionai/ling-3.2-flash:free", "opencode/opencode/deepseek-v4.1-flash-free"],
+        [WorkCapability.CreativeWriting] = [..Ladder("sonnet", "opus", "sol"),
+            "antigravity/gemini-4-neon-medium", "antigravity/claude-sonnet-5-5-medium",
+            "responses-api/claude-sonnet-5", "qoder/GLM-5.3"],
+        [WorkCapability.GameDesign] = [..Ladder("sonnet", "opus", "sol", "astra"),
+            "antigravity/gemini-4-neon-medium", "antigravity/claude-sonnet-5-5-medium",
+            "kilo/kilo/nvidia/nemotron-3-ultra-550b-a55b:free", "opencode/opencode/qwen4-max-free"],
+        [WorkCapability.Translation] = [..Ladder("haiku", "terra", "sonnet", "opus"),
+            "claude/claude-haiku-5-5",
+            "antigravity/gemini-3.8-flash-medium",
+            "responses-api/gpt-6-luna", "clixad/deepseek-v4.1-flash", "qoder/DeepSeek-Flash", "ollama/qwen3.5:4b"],
+        [WorkCapability.Classification] = [..Ladder("haiku", "luna", "terra", "sonnet"),
+            "claude/claude-haiku-5-5",
+            "antigravity/gemini-3.8-flash-low",
+            "ollama/qwen3.5:4b", "responses-api/gpt-6-luna", "clixad/gemini-3.5-flash-lite", "qoder/DeepSeek-Flash"],
+        [WorkCapability.Extraction] = [..Ladder("haiku", "luna", "terra", "sonnet"),
+            "claude/claude-haiku-5-5",
+            "antigravity/gemini-3.8-flash-low",
+            "ollama/qwen3.5:4b", "responses-api/gpt-6-luna", "clixad/gemini-3.5-flash-lite", "qoder/DeepSeek-Flash"],
         [WorkCapability.ImageGeneration] = Ladder("terra", "sol", "astra"),
         [WorkCapability.ImageUnderstanding] = Ladder("terra", "sol", "astra")
     };
@@ -241,18 +303,18 @@ public static class ModelRatings
         return false;
     }
 
-    private static (int Cost, int[] Quality, string Source)? Find(string modelId)
+    private static (int Cost, int[] Quality, string Source, string? Deprecation)? Find(string modelId)
     {
         if (string.IsNullOrWhiteSpace(modelId))
             return null;
         var id = modelId.ToLowerInvariant();
         var current = Current;
-        foreach (var (pattern, cost, quality) in current.Rows)
+        foreach (var (pattern, cost, quality, deprecation) in current.Rows)
             if (Matches(id, pattern))
-                return (cost, quality, current.Source);
+                return (cost, quality, current.Source, deprecation);
         foreach (var(pattern, cost, quality)in Table)
             if (Matches(id, pattern))
-                return (cost, quality, Benchmarks);
+                return (cost, quality, Benchmarks, null);
         return null;
     }
 
@@ -266,7 +328,7 @@ public static class ModelRatings
             return Benchmarks;
         }
 
-        var rows = new List<(string, int, int[])>();
+        var rows = new List<(string, int, int[], string?)>();
         foreach (var entry in set.Models)
         {
             var pattern = (entry.Pattern ?? "").Trim().ToLowerInvariant();
@@ -288,7 +350,7 @@ public static class ModelRatings
                 throw new InvalidOperationException($"'{pattern}' has no quality values.");
             var builtIn = Table.FirstOrDefault(row => Matches(pattern, row.Pattern)).Quality;
             var fallback = (int)Math.Round(given.Values.Average());
-            rows.Add((pattern, entry.Cost, Enum.GetValues<WorkCapability>().Select(c => given.TryGetValue(c, out var v) ? v : builtIn?[(int)c] ?? fallback).ToArray()));
+            rows.Add((pattern, entry.Cost, Enum.GetValues<WorkCapability>().Select(c => given.TryGetValue(c, out var v) ? v : builtIn?[(int)c] ?? fallback).ToArray(), entry.Deprecation));
         }
 
         var priority = new Dictionary<WorkCapability, PriorityRung[]>();
@@ -304,15 +366,46 @@ public static class ModelRatings
     }
 
     // The built-in table and priority order in the ratings-file format, as a starting point for editing.
-    public static RatingSet BuiltIn() => new("built-in", DateTimeOffset.UtcNow, [..Table.Select(row => new RatingEntry(row.Pattern, row.Cost, Enum.GetValues<WorkCapability>().ToDictionary(c => c.ToString(), c => row.Quality[(int)c])))], DefaultPriority.ToDictionary(pair => pair.Key.ToString(), pair => pair.Value));
+    public static RatingSet BuiltIn() => new("built-in", DateTimeOffset.UtcNow, [..Table.Select(row => new RatingEntry(row.Pattern, row.Cost, Enum.GetValues<WorkCapability>().ToDictionary(c => c.ToString(), c => row.Quality[(int)c]), null))], DefaultPriority.ToDictionary(pair => pair.Key.ToString(), pair => pair.Value));
     // Overall rating shown in the model list: average over the seven base text capabilities.
     public static ModelRating Effective(ModelInfo model)
     {
         if (model.RatedByUser)
             return new(model.Quality, model.CostRank, "User rating");
         if (Find(model.Id)is { } hit)
-            return new((int)Math.Round(hit.Quality.Take(7).Average()), hit.Cost, hit.Source);
+        {
+            var source = hit.Source;
+            if (!string.IsNullOrWhiteSpace(hit.Deprecation))
+                source += " · " + hit.Deprecation;
+            return new((int)Math.Round(hit.Quality.Take(7).Average()), hit.Cost, source);
+        }
         return new(model.Quality, model.CostRank, string.IsNullOrWhiteSpace(model.Id) ? "CLI default; exact model unknown" : "Unrated (catalog default)");
+    }
+
+    public static string? DeprecationFor(string? modelId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId))
+            return null;
+        var hit = Find(modelId);
+        return hit?.Deprecation;
+    }
+
+    public static string DescribeCapabilities(string? providerId, ModelInfo model)
+    {
+        var caps = Enum.GetValues<WorkCapability>();
+        var lines = new List<string>();
+        foreach (var cap in caps)
+        {
+            var q = QualityFor(providerId ?? "", model, cap);
+            lines.Add($"{WorkCapabilities.Display(cap)} {q}");
+        }
+        var rating = Effective(model);
+        lines.Add($"Usage rank: {rating.CostRank}");
+        lines.Add($"RatingSource: {rating.Source}");
+        var deprecation = DeprecationFor(model.Id);
+        if (!string.IsNullOrWhiteSpace(deprecation))
+            lines.Add($"Deprecation: {deprecation}");
+        return string.Join(" · ", lines);
     }
 
     // Quality for one capability. A user rating applies to every capability the provider can do.

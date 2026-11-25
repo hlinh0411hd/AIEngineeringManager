@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -22,6 +23,22 @@ public sealed class ProviderAgentRow
 public partial class MainWindow
 {
     private static bool NoAdapterFor(string id) => ManagerSettings.IsCli(id) && id is not ("custom-cli" or "responses-api") && !CliProvider.HasExecutionProfile(id) && !CliProvider.IsDetectedOnly(id);
+
+    private static string BuildAgentSummary(ProviderSettings provider)
+    {
+        var userRated = provider.Models.Count(m => m.RatedByUser);
+        var deprecated = provider.Models.Where(m => !string.IsNullOrWhiteSpace(ModelRatings.DeprecationFor(m.Id))).Select(m => m.Id + " (" + ModelRatings.DeprecationFor(m.Id) + ")").ToArray();
+        var depText = deprecated.Length > 0 ? " · Deprecated: " + string.Join(", ", deprecated) : "";
+        return $"Models available: {provider.Models.Count} (only models this account can run). {provider.ModelDiscoveryStatus}\nUser-rated overrides: {userRated}{depText}\nPriority {provider.Priority} · project writes {(provider.AllowProjectWrite ? "allowed" : "not allowed")}.";
+    }
+
+    private static string BuildModelSummary(ProviderSettings provider)
+    {
+        var userRated = provider.Models.Count(m => m.RatedByUser);
+        var deprecated = provider.Models.Where(m => !string.IsNullOrWhiteSpace(ModelRatings.DeprecationFor(m.Id))).ToArray();
+        var depText = deprecated.Length > 0 ? $" · {deprecated.Length} deprecated" : "";
+        return $"Models: {provider.Models.Count} total · {userRated} user-rated override(s){depText}";
+    }
 
     private void RefreshAgentsGrid()
     {
@@ -126,8 +143,7 @@ public partial class MainWindow
             Margin = new Thickness(0, 0, 0, 12),
             Text = $"{row.Status}. {found?.Detail ?? "Not checked yet; press Detect on the AI tab."}\n"
                 + $"Usage: {row.Usage} · runs today: {row.Runs} · authentication: {row.Auth}\n"
-                + $"Models available: {provider.Models.Count} (only models this account can run). {provider.ModelDiscoveryStatus}\n"
-                + $"Priority {provider.Priority} · project writes {(provider.AllowProjectWrite ? "allowed" : "not allowed")}."
+                + BuildAgentSummary(provider)
         };
         DockPanel.SetDock(summary, Dock.Top);
         panel.Children.Add(summary);
@@ -199,6 +215,15 @@ public partial class MainWindow
         };
         actions.Children.Add(verify);
 
+        var updateWebRatings = new Button
+        {
+            Content = "Update ratings from web",
+            Padding = new Thickness(12, 4, 12, 4),
+            Margin = new Thickness(0, 0, 6, 0),
+            ToolTip = "Consult public benchmark and pricing websites to update quality and usage rank for agent models"
+        };
+        actions.Children.Add(updateWebRatings);
+
         var advanced = new Button { Content = "Advanced settings…", Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 6, 0) };
         advanced.Click += (_, _) =>
         {
@@ -224,6 +249,16 @@ public partial class MainWindow
         DockPanel.SetDock(footer, Dock.Bottom);
         panel.Children.Add(footer);
 
+        var modelsSummary = new TextBlock
+        {
+            Text = BuildModelSummary(provider),
+            Foreground = UiArt.Brush("#B8B0CF"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 8, 0, 4),
+            FontSize = 12
+        };
+        panel.Children.Add(modelsSummary);
+
         var models = new DataGrid
         {
             AutoGenerateColumns = false,
@@ -231,6 +266,38 @@ public partial class MainWindow
             CanUserAddRows = false,
             HeadersVisibility = DataGridHeadersVisibility.Column,
             ItemsSource = provider.Models.ToArray()
+        };
+        models.LoadingRow += (_, args) =>
+        {
+            if (args.Row.Item is ModelInfo m)
+            {
+                var capTooltip = ModelRatings.DescribeCapabilities(row.Id, m);
+                var deprecation = ModelRatings.DeprecationFor(m.Id);
+                var ratedFlag = m.RatedByUser ? " · User-rated override" : "";
+                var depText = deprecation != null ? $" · {deprecation}" : "";
+                args.Row.ToolTip = capTooltip + ratedFlag + depText;
+            }
+        };
+        updateWebRatings.Click += async (_, _) =>
+        {
+            updateWebRatings.IsEnabled = false;
+            try
+            {
+                await Guard(async () =>
+                {
+                    await RunWebRatingsUpdateAsync();
+                    var updatedProvider = settings.Providers.Single(p => p.Id == row.Id);
+                    models.ItemsSource = updatedProvider.Models.ToArray();
+                    summary.Text = $"{row.Status}. {found?.Detail ?? "Not checked yet; press Detect on the AI tab."}\n"
+                        + $"Usage: {row.Usage} · runs today: {row.Runs} · authentication: {row.Auth}\n"
+                        + BuildAgentSummary(updatedProvider);
+                    modelsSummary.Text = BuildModelSummary(updatedProvider);
+                });
+            }
+            finally
+            {
+                updateWebRatings.IsEnabled = true;
+            }
         };
         models.Columns.Add(new DataGridTextColumn { Header = "Model ID", Binding = new System.Windows.Data.Binding("Id"), Width = new DataGridLength(1, DataGridLengthUnitType.Star) });
         models.Columns.Add(new DataGridTextColumn { Header = "Task types", Binding = new System.Windows.Data.Binding("AllowedTaskTypes"), Width = new DataGridLength(200) });

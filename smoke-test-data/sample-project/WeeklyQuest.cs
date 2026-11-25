@@ -1,0 +1,1 @@
+// UI acceptance fixture
